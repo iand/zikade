@@ -36,9 +36,6 @@ type Dht[K kad.Key[K], A kad.Address[A]] struct {
 	// rtr is the message router used to send messages
 	rtr Router[K, A]
 
-	// responses is the channel on which responses generated from node handler requests are sent.
-	responses chan NodeHandlerResponse
-
 	routingNotifications chan RoutingNotification
 
 	// networkBehaviour is the behaviour responsible for communicating with the network
@@ -172,8 +169,6 @@ func NewDht[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], rtr Router[K, A]
 		networkBehaviour: networkBehaviour,
 		routingBehaviour: routingBehaviour,
 		queryBehaviour:   queryBehaviour,
-
-		responses: make(chan NodeHandlerResponse),
 
 		routingNotifications: make(chan RoutingNotification, 20),
 	}
