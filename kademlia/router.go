@@ -9,7 +9,7 @@ import (
 )
 
 // Router its a work in progress
-
+// TODO figure out the role of protocol identifiers
 type Router[K kad.Key[K], A kad.Address[A]] interface {
 	// SendMessage attempts to send a request to another node. The Router will absorb the addresses in to into its
 	// internal nodestore. This method blocks until a response is received or an error is encountered.

@@ -35,10 +35,6 @@ func NewNetworkBehaviour[K kad.Key[K], A kad.Address[A]](rtr Router[K, A]) *Netw
 	return b
 }
 
-func (b *NetworkBehaviour[K, A]) Enqueue(ctx context.Context, ev DhtEvent, out chan<- DhtEvent) {
-	panic("not implemented")
-}
-
 func (b *NetworkBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
 	b.pendingMu.Lock()
 	defer b.pendingMu.Unlock()
@@ -53,7 +49,7 @@ func (b *NetworkBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
 			b.nodeHandlers[nodeKey] = nh
 		}
 		b.nodeHandlersMu.Unlock()
-		nh.Enqueue(ctx, ev, nil)
+		nh.Notify(ctx, ev)
 	default:
 		panic(fmt.Sprintf("unexpected dht event: %T", ev))
 	}
@@ -113,7 +109,7 @@ func (b *NetworkBehaviour[K, A]) getNodeHandler(ctx context.Context, id kad.Node
 type NodeHandler[K kad.Key[K], A kad.Address[A]] struct {
 	self  kad.NodeInfo[K, A]
 	rtr   Router[K, A]
-	queue *WorkQueue[NodeHandlerRequest, NodeHandlerResponse]
+	queue *WorkQueue[NodeHandlerRequest]
 }
 
 func NewNodeHandler[K kad.Key[K], A kad.Address[A]](self kad.NodeInfo[K, A], rtr Router[K, A]) *NodeHandler[K, A] {
@@ -127,11 +123,11 @@ func NewNodeHandler[K kad.Key[K], A kad.Address[A]](self kad.NodeInfo[K, A], rtr
 	return h
 }
 
-func (h *NodeHandler[K, A]) Enqueue(ctx context.Context, ev NodeHandlerRequest, out chan<- NodeHandlerResponse) {
-	h.queue.Enqueue(ctx, ev, out)
+func (h *NodeHandler[K, A]) Notify(ctx context.Context, ev NodeHandlerRequest) {
+	h.queue.Enqueue(ctx, ev)
 }
 
-func (h *NodeHandler[K, A]) send(ctx context.Context, ev NodeHandlerRequest, _ chan<- NodeHandlerResponse) bool {
+func (h *NodeHandler[K, A]) send(ctx context.Context, ev NodeHandlerRequest) bool {
 	switch cmd := ev.(type) {
 	case *EventOutboundGetClosestNodes[K, A]:
 		if cmd.Notifiee == nil {
@@ -181,7 +177,7 @@ func (h *NodeHandler[K, A]) GetClosestNodes(ctx context.Context, k K, n int) ([]
 		Notifiee: w,
 	}
 
-	h.queue.Enqueue(ctx, ev, nil)
+	h.queue.Enqueue(ctx, ev)
 
 	select {
 	case <-ctx.Done():
