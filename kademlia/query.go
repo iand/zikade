@@ -8,6 +8,7 @@ import (
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/query"
 	"github.com/plprobelab/go-kademlia/util"
+	"golang.org/x/exp/slog"
 )
 
 type PooledQueryBehaviour[K kad.Key[K], A kad.Address[A]] struct {
@@ -17,13 +18,16 @@ type PooledQueryBehaviour[K kad.Key[K], A kad.Address[A]] struct {
 	pendingMu sync.Mutex
 	pending   []DhtEvent
 	ready     chan struct{}
+
+	logger *slog.Logger
 }
 
-func NewPooledQueryBehaviour[K kad.Key[K], A kad.Address[A]](pool *query.Pool[K, A]) *PooledQueryBehaviour[K, A] {
+func NewPooledQueryBehaviour[K kad.Key[K], A kad.Address[A]](pool *query.Pool[K, A], logger *slog.Logger) *PooledQueryBehaviour[K, A] {
 	h := &PooledQueryBehaviour[K, A]{
 		pool:    pool,
 		waiters: make(map[query.QueryID]*Waiter[DhtEvent]),
 		ready:   make(chan struct{}, 1),
+		logger:  logger,
 	}
 	return h
 }

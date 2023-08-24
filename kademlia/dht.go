@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
-
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/kaderr"
 	"github.com/plprobelab/go-kademlia/key"
@@ -15,6 +15,8 @@ import (
 	"github.com/plprobelab/go-kademlia/query"
 	"github.com/plprobelab/go-kademlia/routing"
 	"github.com/plprobelab/go-kademlia/util"
+	"go.uber.org/zap/exp/zapslog"
+	"golang.org/x/exp/slog"
 
 	"github.com/iand/zikade/core"
 )
@@ -60,6 +62,8 @@ type Config struct {
 
 	RequestConcurrency int           // the maximum number of concurrent requests that each query may have in flight
 	RequestTimeout     time.Duration // the timeout queries should use for contacting a single node
+
+	Logger *slog.Logger // a structured logger that should be used when logging.
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
@@ -97,6 +101,13 @@ func (cfg *Config) Validate() error {
 			Err:       fmt.Errorf("request timeout must be greater than zero"),
 		}
 	}
+
+	if cfg.Logger == nil {
+		return &kaderr.ConfigurationError{
+			Component: "DhtConfig",
+			Err:       fmt.Errorf("logger must not be nil"),
+		}
+	}
 	return nil
 }
 
@@ -108,6 +119,7 @@ func DefaultConfig() *Config {
 		QueryTimeout:       5 * time.Minute,
 		RequestConcurrency: 3,
 		RequestTimeout:     time.Minute,
+		Logger:             slog.New(zapslog.NewHandler(logging.Logger("dht").Desugar().Core())),
 	}
 }
 
@@ -129,7 +141,7 @@ func NewDht[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], rtr Router[K, A]
 	if err != nil {
 		return nil, fmt.Errorf("query pool: %w", err)
 	}
-	queryBehaviour := NewPooledQueryBehaviour(qp)
+	queryBehaviour := NewPooledQueryBehaviour(qp, cfg.Logger)
 
 	bootstrapCfg := routing.DefaultBootstrapConfig[K, A]()
 	bootstrapCfg.Clock = cfg.Clock
@@ -156,9 +168,9 @@ func NewDht[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], rtr Router[K, A]
 		return nil, fmt.Errorf("include: %w", err)
 	}
 
-	routingBehaviour := NewRoutingBehaviour(self, bootstrap, include)
+	routingBehaviour := NewRoutingBehaviour(self, bootstrap, include, cfg.Logger)
 
-	networkBehaviour := NewNetworkBehaviour(rtr)
+	networkBehaviour := NewNetworkBehaviour(rtr, cfg.Logger)
 
 	d := &Dht[K, A]{
 		self: self,

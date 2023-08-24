@@ -23,13 +23,16 @@ type NetworkBehaviour[K kad.Key[K], A kad.Address[A]] struct {
 	pendingMu sync.Mutex
 	pending   []DhtEvent
 	ready     chan struct{}
+
+	logger *slog.Logger
 }
 
-func NewNetworkBehaviour[K kad.Key[K], A kad.Address[A]](rtr Router[K, A]) *NetworkBehaviour[K, A] {
+func NewNetworkBehaviour[K kad.Key[K], A kad.Address[A]](rtr Router[K, A], logger *slog.Logger) *NetworkBehaviour[K, A] {
 	b := &NetworkBehaviour[K, A]{
 		rtr:          rtr,
 		nodeHandlers: make(map[string]*NodeHandler[K, A]),
 		ready:        make(chan struct{}, 1),
+		logger:       logger,
 	}
 
 	return b
@@ -45,7 +48,7 @@ func (b *NetworkBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
 		b.nodeHandlersMu.Lock()
 		nh, ok := b.nodeHandlers[nodeKey]
 		if !ok {
-			nh = NewNodeHandler(ev.To, b.rtr)
+			nh = NewNodeHandler(ev.To, b.rtr, b.logger)
 			b.nodeHandlers[nodeKey] = nh
 		}
 		b.nodeHandlersMu.Unlock()
@@ -67,8 +70,6 @@ func (b *NetworkBehaviour[K, A]) Ready() <-chan struct{} {
 }
 
 func (b *NetworkBehaviour[K, A]) Perform(ctx context.Context) (DhtEvent, bool) {
-	slog.Info("PooledQueryBehaviour.Perform")
-
 	// No inbound work can be done until Perform is complete
 	b.pendingMu.Lock()
 	defer b.pendingMu.Unlock()
@@ -99,7 +100,7 @@ func (b *NetworkBehaviour[K, A]) getNodeHandler(ctx context.Context, id kad.Node
 		if err != nil {
 			return nil, err
 		}
-		nh = NewNodeHandler(info, b.rtr)
+		nh = NewNodeHandler(info, b.rtr, b.logger)
 		b.nodeHandlers[nodeKey] = nh
 	}
 	b.nodeHandlersMu.Unlock()
@@ -107,15 +108,17 @@ func (b *NetworkBehaviour[K, A]) getNodeHandler(ctx context.Context, id kad.Node
 }
 
 type NodeHandler[K kad.Key[K], A kad.Address[A]] struct {
-	self  kad.NodeInfo[K, A]
-	rtr   Router[K, A]
-	queue *WorkQueue[NodeHandlerRequest]
+	self   kad.NodeInfo[K, A]
+	rtr    Router[K, A]
+	queue  *WorkQueue[NodeHandlerRequest]
+	logger *slog.Logger
 }
 
-func NewNodeHandler[K kad.Key[K], A kad.Address[A]](self kad.NodeInfo[K, A], rtr Router[K, A]) *NodeHandler[K, A] {
+func NewNodeHandler[K kad.Key[K], A kad.Address[A]](self kad.NodeInfo[K, A], rtr Router[K, A], logger *slog.Logger) *NodeHandler[K, A] {
 	h := &NodeHandler[K, A]{
-		self: self,
-		rtr:  rtr,
+		self:   self,
+		rtr:    rtr,
+		logger: logger,
 	}
 
 	h.queue = NewWorkQueue(h.send)
@@ -189,7 +192,7 @@ func (h *NodeHandler[K, A]) GetClosestNodes(ctx context.Context, k K, n int) ([]
 			nodes := make([]core.Node[K, A], 0, len(res.ClosestNodes))
 			for _, info := range res.ClosestNodes {
 				// TODO use a global registry of node handlers
-				nodes = append(nodes, NewNodeHandler(info, h.rtr))
+				nodes = append(nodes, NewNodeHandler(info, h.rtr, h.logger))
 				n--
 				if n == 0 {
 					break

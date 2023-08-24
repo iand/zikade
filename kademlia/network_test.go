@@ -4,10 +4,12 @@ import (
 	"testing"
 
 	"github.com/benbjohnson/clock"
-	"github.com/iand/zikade/internal/kadtest"
-	"github.com/iand/zikade/internal/nettest"
 	"github.com/plprobelab/go-kademlia/key"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slog"
+
+	"github.com/iand/zikade/internal/kadtest"
+	"github.com/iand/zikade/internal/nettest"
 )
 
 var _ Router[key.Key8, kadtest.StrAddr] = (*nettest.Router[key.Key8, kadtest.StrAddr])(nil)
@@ -20,7 +22,7 @@ func TestGetClosestNodes(t *testing.T) {
 	clk := clock.NewMock()
 	_, nodes := nettest.LinearTopology(4, clk)
 
-	h := NewNodeHandler[key.Key8, kadtest.StrAddr](nodes[1].NodeInfo, nodes[1].Router)
+	h := NewNodeHandler[key.Key8, kadtest.StrAddr](nodes[1].NodeInfo, nodes[1].Router, slog.Default())
 
 	// node 1 has node 2 in its routing table so it will return it along with node 0
 	found, err := h.GetClosestNodes(ctx, nodes[2].NodeInfo.ID().Key(), 2)

@@ -9,6 +9,7 @@ import (
 	"github.com/plprobelab/go-kademlia/key"
 	"github.com/plprobelab/go-kademlia/routing"
 	"github.com/plprobelab/go-kademlia/util"
+	"golang.org/x/exp/slog"
 )
 
 type RoutingBehaviour[K kad.Key[K], A kad.Address[A]] struct {
@@ -21,14 +22,17 @@ type RoutingBehaviour[K kad.Key[K], A kad.Address[A]] struct {
 	pendingMu sync.Mutex
 	pending   []DhtEvent
 	ready     chan struct{}
+
+	logger *slog.Logger
 }
 
-func NewRoutingBehaviour[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], bootstrap *routing.Bootstrap[K, A], include *routing.Include[K, A]) *RoutingBehaviour[K, A] {
+func NewRoutingBehaviour[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], bootstrap *routing.Bootstrap[K, A], include *routing.Include[K, A], logger *slog.Logger) *RoutingBehaviour[K, A] {
 	r := &RoutingBehaviour[K, A]{
 		self:      self,
 		bootstrap: bootstrap,
 		include:   include,
 		ready:     make(chan struct{}, 1),
+		logger:    logger,
 	}
 	return r
 }
