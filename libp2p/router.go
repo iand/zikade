@@ -3,12 +3,14 @@ package libp2p
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-msgio/pbio"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/key"
@@ -20,16 +22,14 @@ import (
 
 var ProtocolKad1 = address.ProtocolID("/ipfs/kad/1.0.0")
 
-func NewRouter(ctx context.Context, host host.Host, peerStoreTTL time.Duration) *Router {
+func NewRouter(host host.Host, peerStoreTTL time.Duration) *Router {
 	return &Router{
-		ctx:          ctx,
 		host:         host,
 		peerStoreTTL: peerStoreTTL,
 	}
 }
 
 type Router struct {
-	ctx          context.Context
 	host         host.Host
 	peerStoreTTL time.Duration
 }
@@ -144,7 +144,14 @@ func (r *Router) PeerInfo(id *PeerID) (peer.AddrInfo, error) {
 	return r.host.Peerstore().PeerInfo(p.ID), nil
 }
 
-func (r *Router) Connectedness(id *PeerID) (endpoint.Connectedness, error) {
+func getPeerID(id kad.NodeID[key.Key256]) (*PeerID, error) {
+	if p, ok := id.(*PeerID); ok {
+		return p, nil
+	}
+	return nil, ErrInvalidPeer
+}
+
+func (r *Router) Connectedness(ctx context.Context, id *PeerID) (endpoint.Connectedness, error) {
 	p, err := getPeerID(id)
 	if err != nil {
 		return endpoint.NotConnected, err
@@ -182,6 +189,64 @@ func (r *Router) DialPeer(ctx context.Context, id *PeerID) error {
 	return nil
 }
 
-func (e *Router) Key() key.Key256 {
-	return PeerID{ID: e.host.ID()}.Key()
+func (r *Router) Key() key.Key256 {
+	return PeerID{ID: r.host.ID()}.Key()
+}
+
+// A RequestHandlerFunc is a function that handles a request from a remote node
+type RequestHandlerFunc[K kad.Key[K]] func(context.Context, kad.NodeID[K], kad.Message) (kad.Message, error)
+
+func (e *Router) AddRequestHandler(protoID address.ProtocolID, req kad.Message, reqHandler RequestHandlerFunc[key.Key256]) error {
+	protoReq, ok := req.(ProtoKadMessage)
+	if !ok {
+		return ErrRequireProtoKadMessage
+	}
+	if reqHandler == nil {
+		return ErrInvalidRequestHandler
+	}
+	// when a new request comes in, we need to queue it
+	streamHandler := func(s network.Stream) {
+		defer s.Close()
+
+		// create a protobuf reader and writer
+		r := pbio.NewDelimitedReader(s, network.MessageSizeMax)
+		w := pbio.NewDelimitedWriter(s)
+
+		for {
+			// read a message from the stream
+			err := r.ReadMsg(protoReq)
+			if err != nil {
+				if err == io.EOF {
+					// stream EOF, all done
+					return
+				}
+				return
+			}
+
+			requester := NewAddrInfo(
+				e.host.Peerstore().PeerInfo(s.Conn().RemotePeer()),
+			)
+			resp, err := reqHandler(context.Background(), requester, req)
+			if err != nil {
+				return
+			}
+
+			protoResp, ok := resp.(ProtoKadMessage)
+			if !ok {
+				return
+			}
+
+			// write the response to the stream
+			err = w.WriteMsg(protoResp)
+			if err != nil {
+				return
+			}
+		}
+	}
+	e.host.SetStreamHandler(protocol.ID(protoID), streamHandler)
+	return nil
+}
+
+func (r *Router) RemoveRequestHandler(protoID address.ProtocolID) {
+	r.host.RemoveStreamHandler(protocol.ID(protoID))
 }

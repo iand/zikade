@@ -1,14 +1,17 @@
 package libp2p
 
 import (
+	"context"
 	"errors"
 
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-msgio/pbio"
 	"github.com/multiformats/go-multiaddr"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/key"
-	"github.com/plprobelab/go-kademlia/network/endpoint"
 )
 
 var ErrNoValidAddresses = errors.New("no valid addresses")
@@ -29,11 +32,21 @@ func FindKeyRequest(k key.Key256) *Message {
 	}
 }
 
-func FindPeerResponse(peers []kad.NodeID[key.Key256], e endpoint.NetworkedEndpoint[key.Key256, multiaddr.Multiaddr]) *Message {
+func FindPeerResponse(ctx context.Context, peers []kad.NodeID[key.Key256], r *Router) *Message {
 	return &Message{
 		Type:        Message_FIND_NODE,
-		CloserPeers: NodeIDsToPbPeers(peers, e),
+		CloserPeers: NodeIDsToPbPeers(ctx, peers, r),
 	}
+}
+
+func WriteMsg(s network.Stream, msg protoreflect.ProtoMessage) error {
+	w := pbio.NewDelimitedWriter(s)
+	return w.WriteMsg(msg)
+}
+
+func ReadMsg(s network.Stream, msg protoreflect.ProtoMessage) error {
+	r := pbio.NewDelimitedReader(s, network.MessageSizeMax)
+	return r.ReadMsg(msg)
 }
 
 func (msg *Message) Target() key.Key256 {
@@ -89,8 +102,8 @@ func ParsePeers(pbps []*Message_Peer) []kad.NodeInfo[key.Key256, multiaddr.Multi
 	return peers
 }
 
-func NodeIDsToPbPeers(peers []kad.NodeID[key.Key256], e endpoint.NetworkedEndpoint[key.Key256, multiaddr.Multiaddr]) []*Message_Peer {
-	if len(peers) == 0 || e == nil {
+func NodeIDsToPbPeers(ctx context.Context, peers []kad.NodeID[key.Key256], r *Router) []*Message_Peer {
+	if len(peers) == 0 || r == nil {
 		return nil
 	}
 
@@ -98,7 +111,7 @@ func NodeIDsToPbPeers(peers []kad.NodeID[key.Key256], e endpoint.NetworkedEndpoi
 	for _, n := range peers {
 		p := n.(*PeerID)
 
-		id, err := e.NetworkAddress(n)
+		id, err := r.GetNodeInfo(ctx, n)
 		if err != nil {
 			continue
 		}
@@ -110,7 +123,7 @@ func NodeIDsToPbPeers(peers []kad.NodeID[key.Key256], e endpoint.NetworkedEndpoi
 			pbAddrs[i] = a.Bytes()
 		}
 
-		connectedness, err := e.Connectedness(n)
+		connectedness, err := r.Connectedness(ctx, p)
 		if err != nil {
 			continue
 		}

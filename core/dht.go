@@ -127,6 +127,7 @@ func FindClosestNodes[K kad.Key[K], A kad.Address[A]](ctx context.Context, d DHT
 	if d, ok := d.(FindClosestDHT[K, A]); ok {
 		return d.FindClosestNodes(ctx, target, n)
 	}
+
 	panic("not implemented")
 }
 

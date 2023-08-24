@@ -1,18 +1,17 @@
 package libp2p
 
 import (
-	"context"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/iand/zikade/internal/kadtest"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/require"
 
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/key"
-	"github.com/plprobelab/go-kademlia/sim"
 )
 
 var (
@@ -23,6 +22,9 @@ var (
 var testPeerstoreTTL = 10 * time.Minute
 
 func TestFindPeerRequest(t *testing.T) {
+	_, cancel := kadtest.CtxShort(t)
+	defer cancel()
+
 	p, err := peer.Decode("12D3KooWH6Qd1EW75ANiCtYfD51D6M7MiZwLQ4g8wEBpoEUnVYNz")
 	require.NoError(t, err)
 
@@ -38,6 +40,9 @@ func TestFindPeerRequest(t *testing.T) {
 }
 
 func TestFindKeyRequest(t *testing.T) {
+	_, cancel := kadtest.CtxShort(t)
+	defer cancel()
+
 	p, err := peer.Decode("12D3KooWH6Qd1EW75ANiCtYfD51D6M7MiZwLQ4g8wEBpoEUnVYNz")
 	require.NoError(t, err)
 
@@ -66,12 +71,12 @@ func createDummyPeerInfo(id, addr string) (*AddrInfo, error) {
 }
 
 func TestFindPeerResponse(t *testing.T) {
-	ctx := context.Background()
-	selfAddr, err := createDummyPeerInfo("12BoooooSELF", "/ip4/1.1.1.1")
-	require.NoError(t, err)
+	ctx, cancel := kadtest.CtxShort(t)
+	defer cancel()
 
-	fakeEndpoint := sim.NewEndpoint[key.Key256, multiaddr.Multiaddr](selfAddr, nil, nil)
+	r := newTestRouter(t)
 
+	var err error
 	nPeers := 5
 	closerPeers := make([]kad.NodeInfo[key.Key256, multiaddr.Multiaddr], nPeers)
 	closerIds := make([]kad.NodeID[key.Key256], nPeers)
@@ -81,34 +86,37 @@ func TestFindPeerResponse(t *testing.T) {
 		require.NoError(t, err)
 
 		closerIds[i] = closerPeers[i].(*AddrInfo).PeerID()
-		fakeEndpoint.MaybeAddToPeerstore(ctx, closerPeers[i], testPeerstoreTTL)
+		r.AddNodeInfo(ctx, closerPeers[i], testPeerstoreTTL)
 	}
 
-	resp := FindPeerResponse(closerIds, fakeEndpoint)
+	resp := FindPeerResponse(ctx, closerIds, r)
 
 	// require.Nil(t, resp.Target())
 	require.Equal(t, closerPeers, resp.CloserNodes())
 }
 
 func TestCornerCases(t *testing.T) {
-	resp := FindPeerResponse(nil, nil)
+	ctx, cancel := kadtest.CtxShort(t)
+	defer cancel()
+
+	resp := FindPeerResponse(ctx, nil, nil)
 	// require.Nil(t, resp.Target())
 	require.Equal(t, 0, len(resp.CloserNodes()))
 
 	require.Equal(t, &Message{}, resp.EmptyResponse())
 
 	ids := make([]kad.NodeID[key.Key256], 0)
-	resp = FindPeerResponse(ids, nil)
+	resp = FindPeerResponse(ctx, ids, nil)
 
 	// require.Nil(t, resp.Target())
 	require.Equal(t, 0, len(resp.CloserNodes()))
 
-	fakeEndpoint := sim.NewEndpoint[key.Key256, multiaddr.Multiaddr](AddrInfo{}, nil, nil)
+	r := newTestRouter(t)
 	n0, err := peer.Decode("1D3oooUnknownPeer")
 	require.NoError(t, err)
 	ids = append(ids, &PeerID{ID: n0})
 
-	resp = FindPeerResponse(ids, fakeEndpoint)
+	resp = FindPeerResponse(ctx, ids, r)
 	require.Equal(t, 0, len(resp.CloserNodes()))
 
 	pbp := Message_Peer{
