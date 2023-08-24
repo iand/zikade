@@ -16,17 +16,17 @@ func (f NotifyFunc[C]) Notify(ctx context.Context, ev C) {
 	f(ctx, ev)
 }
 
-type Behaviour[C DhtEvent, E DhtEvent] interface {
+type Behaviour[I DhtEvent, O DhtEvent] interface {
 	// Ready returns a channel that signals when the behaviour is ready to perform work.
 	Ready() <-chan struct{}
 
 	// Notify informs the behaviour of an event. The behaviour may perform the event
 	// immediately and queue the result, causing the behaviour to become ready.
-	Notify(ctx context.Context, ev DhtEvent)
+	Notify(ctx context.Context, ev I)
 
-	// Perform gives the behaviour the opportunity to perform work or to return queued
-	// results.
-	Perform(ctx context.Context) (DhtEvent, bool)
+	// Perform gives the behaviour the opportunity to perform work or to return a queued
+	// result as an event.
+	Perform(ctx context.Context) (O, bool)
 }
 
 type WorkQueueFunc[C any, E any] func(ctx context.Context, cmd C, out chan<- E) bool
