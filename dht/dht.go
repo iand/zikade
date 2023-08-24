@@ -6,11 +6,9 @@ import (
 
 	"github.com/ipfs/go-datastore/trace"
 
-	"github.com/iand/zikade/kademlia"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
-	ma "github.com/multiformats/go-multiaddr"
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/key"
 	"golang.org/x/exp/slog"
@@ -31,8 +29,8 @@ type DHT struct {
 	modeMu sync.RWMutex
 	mode   mode
 
-	// kad is a reference to the zicade kademlia implementation
-	kad *kademlia.Dht[key.Key256, ma.Multiaddr]
+	// kad is a reference to the behaviour coordinator
+	coord *Coordinator
 
 	// rt holds a reference to the routing table implementation. This can be
 	// configured via the Config struct.
@@ -109,14 +107,8 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		}
 	}
 
-	// TODO: implement kademlia.Router, possibly as a separate component or possibly use the kad-dht DHT itself
-	var rtr kademlia.Router[key.Key256, ma.Multiaddr]
-
-	// instantiate a new Kademlia DHT coordinator.
-	d.kad, err = kademlia.NewDht[key.Key256, ma.Multiaddr](nid, rtr, d.rt, cfg.Kademlia)
-	if err != nil {
-		return nil, fmt.Errorf("new kademlia dht: %w", err)
-	}
+	// TODO: implement create and pass the various behaviours
+	d.coord = NewCoordinator()
 
 	// determine mode to start in
 	switch cfg.Mode {
