@@ -114,11 +114,11 @@ func (c *Coordinator) Dispatch(ctx context.Context, ev DhtEvent) {
 	}
 }
 
-type Notifiee[C DhtEvent] interface {
+type Notify[C DhtEvent] interface {
 	Notify(ctx context.Context, ev C)
 }
 
-type NotifieeCloser[C DhtEvent] interface {
+type NotifyCloser[C DhtEvent] interface {
 	Notify(ctx context.Context, ev C)
 	Close()
 }
@@ -166,7 +166,7 @@ type EventOutboundGetClosestNodes struct {
 	QueryID  query.QueryID
 	To       nodeInfo // TODO: nodeInfo or peer.AddrInfo or kad.NodeInfo[key.Key256, ma.Multiaddr]
 	Target   key.Key256
-	Notifiee Notifiee[DhtEvent]
+	Notifiee Notify[DhtEvent]
 }
 
 func (EventOutboundGetClosestNodes) dhtEvent()           {}
@@ -178,7 +178,7 @@ type EventStartQuery struct {
 	ProtocolID        address.ProtocolID
 	Message           kad.Request[key.Key256, ma.Multiaddr]
 	KnownClosestNodes []nodeID // TODO: nodeID or peer.ID or kad.NodeID[key.Key256]
-	Waiter            NotifieeCloser[DhtEvent]
+	Waiter            NotifyCloser[DhtEvent]
 }
 
 func (EventStartQuery) dhtEvent()   {}
