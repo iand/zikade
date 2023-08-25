@@ -1,4 +1,4 @@
-package kademlia
+package coord
 
 import (
 	"github.com/plprobelab/go-kademlia/kad"
@@ -40,10 +40,10 @@ func (EventDhtStartBootstrap[K, A]) dhtEvent()   {}
 func (EventDhtStartBootstrap[K, A]) dhtCommand() {}
 
 type EventOutboundGetClosestNodes[K kad.Key[K], A kad.Address[A]] struct {
-	QueryID  query.QueryID
-	To       kad.NodeInfo[K, A]
-	Target   K
-	Notifiee Notifiee[DhtEvent]
+	QueryID query.QueryID
+	To      kad.NodeInfo[K, A]
+	Target  K
+	Notify  Notify[DhtEvent]
 }
 
 func (EventOutboundGetClosestNodes[K, A]) dhtEvent()           {}

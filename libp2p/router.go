@@ -16,8 +16,6 @@ import (
 	"github.com/plprobelab/go-kademlia/key"
 	"github.com/plprobelab/go-kademlia/network/address"
 	"github.com/plprobelab/go-kademlia/network/endpoint"
-
-	"github.com/iand/zikade/kademlia"
 )
 
 var ProtocolKad1 = address.ProtocolID("/ipfs/kad/1.0.0")
@@ -33,8 +31,6 @@ type Router struct {
 	host         host.Host
 	peerStoreTTL time.Duration
 }
-
-var _ kademlia.Router[key.Key256, multiaddr.Multiaddr] = (*Router)(nil)
 
 func (r *Router) SendMessage(ctx context.Context, to kad.NodeInfo[key.Key256, multiaddr.Multiaddr], protoID address.ProtocolID, req kad.Request[key.Key256, multiaddr.Multiaddr]) (kad.Response[key.Key256, multiaddr.Multiaddr], error) {
 	if protoID != ProtocolKad1 {

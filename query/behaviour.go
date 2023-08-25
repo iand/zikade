@@ -1,4 +1,4 @@
-package kademlia
+package query
 
 import (
 	"context"
@@ -8,31 +8,38 @@ import (
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/query"
 	"github.com/plprobelab/go-kademlia/util"
-	"golang.org/x/exp/slog"
+
+	"github.com/iand/zikade/coord"
+	"github.com/iand/zikade/internal/shim"
 )
 
 type PooledQueryBehaviour[K kad.Key[K], A kad.Address[A]] struct {
 	pool    *query.Pool[K, A]
-	waiters map[query.QueryID]*Waiter[DhtEvent]
+	waiters map[query.QueryID]*coord.Waiter[coord.DhtEvent]
 
 	pendingMu sync.Mutex
-	pending   []DhtEvent
+	pending   []coord.DhtEvent
 	ready     chan struct{}
 
-	logger *slog.Logger
+	cfg Config
 }
 
-func NewPooledQueryBehaviour[K kad.Key[K], A kad.Address[A]](pool *query.Pool[K, A], logger *slog.Logger) *PooledQueryBehaviour[K, A] {
+func NewPooledQueryBehaviour[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], cfg *Config) (*PooledQueryBehaviour[K, A], error) {
+	pool, err := query.NewPool[K, A](self, cfg.Pool)
+	if err != nil {
+		return nil, fmt.Errorf("query pool: %w", err)
+	}
+
 	h := &PooledQueryBehaviour[K, A]{
 		pool:    pool,
-		waiters: make(map[query.QueryID]*Waiter[DhtEvent]),
+		waiters: make(map[query.QueryID]*coord.Waiter[coord.DhtEvent]),
 		ready:   make(chan struct{}, 1),
-		logger:  logger,
+		cfg:     *cfg,
 	}
-	return h
+	return h, nil
 }
 
-func (r *PooledQueryBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
+func (r *PooledQueryBehaviour[K, A]) Notify(ctx context.Context, ev coord.DhtEvent) {
 	ctx, span := util.StartSpan(ctx, "PooledQueryBehaviour.Notify")
 	defer span.End()
 
@@ -41,7 +48,7 @@ func (r *PooledQueryBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
 
 	var cmd query.PoolEvent
 	switch ev := ev.(type) {
-	case *EventStartQuery[K, A]:
+	case *coord.EventStartQuery[K, A]:
 		cmd = &query.EventPoolAddQuery[K, A]{
 			QueryID:           ev.QueryID,
 			Target:            ev.Target,
@@ -53,33 +60,33 @@ func (r *PooledQueryBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
 			r.waiters[ev.QueryID] = ev.Waiter
 		}
 
-	case *EventStopQuery:
+	case *coord.EventStopQuery:
 		cmd = &query.EventPoolStopQuery{
 			QueryID: ev.QueryID,
 		}
 
-	case *EventGetClosestNodesSuccess[K, A]:
+	case *coord.EventGetClosestNodesSuccess[K, A]:
 		for _, info := range ev.ClosestNodes {
 			// TODO: do this after advancing pool
-			r.pending = append(r.pending, &EventDhtAddNodeInfo[K, A]{
+			r.pending = append(r.pending, &coord.EventDhtAddNodeInfo[K, A]{
 				NodeInfo: info,
 			})
 		}
 		waiter, ok := r.waiters[ev.QueryID]
 		if ok {
-			waiter.Notify(ctx, &EventQueryProgressed[K, A]{
+			waiter.Notify(ctx, &coord.EventQueryProgressed[K, A]{
 				NodeID:   ev.To.ID(),
 				QueryID:  ev.QueryID,
-				Response: ClosestNodesFakeResponse(ev.Target, ev.ClosestNodes),
+				Response: shim.ClosestNodesFakeResponse(ev.Target, ev.ClosestNodes),
 				// Stats:    stats,
 			})
 		}
 		cmd = &query.EventPoolMessageResponse[K, A]{
 			NodeID:   ev.To.ID(),
 			QueryID:  ev.QueryID,
-			Response: ClosestNodesFakeResponse(ev.Target, ev.ClosestNodes),
+			Response: shim.ClosestNodesFakeResponse(ev.Target, ev.ClosestNodes),
 		}
-	case *EventGetClosestNodesFailure[K, A]:
+	case *coord.EventGetClosestNodesFailure[K, A]:
 		cmd = &query.EventPoolMessageFailure[K]{
 			NodeID:  ev.To.ID(),
 			QueryID: ev.QueryID,
@@ -106,7 +113,7 @@ func (r *PooledQueryBehaviour[K, A]) Ready() <-chan struct{} {
 	return r.ready
 }
 
-func (r *PooledQueryBehaviour[K, A]) Perform(ctx context.Context) (DhtEvent, bool) {
+func (r *PooledQueryBehaviour[K, A]) Perform(ctx context.Context) (coord.DhtEvent, bool) {
 	ctx, span := util.StartSpan(ctx, "PooledQueryBehaviour.Perform")
 	defer span.End()
 
@@ -117,7 +124,7 @@ func (r *PooledQueryBehaviour[K, A]) Perform(ctx context.Context) (DhtEvent, boo
 	for {
 		// drain queued events first.
 		if len(r.pending) > 0 {
-			var ev DhtEvent
+			var ev coord.DhtEvent
 			ev, r.pending = r.pending[0], r.pending[1:]
 
 			if len(r.pending) > 0 {
@@ -141,18 +148,18 @@ func (r *PooledQueryBehaviour[K, A]) Perform(ctx context.Context) (DhtEvent, boo
 	}
 }
 
-func (r *PooledQueryBehaviour[K, A]) advancePool(ctx context.Context, ev query.PoolEvent) (DhtEvent, bool) {
+func (r *PooledQueryBehaviour[K, A]) advancePool(ctx context.Context, ev query.PoolEvent) (coord.DhtEvent, bool) {
 	ctx, span := util.StartSpan(ctx, "PooledQueryBehaviour.advancePool")
 	defer span.End()
 
 	pstate := r.pool.Advance(ctx, ev)
 	switch st := pstate.(type) {
 	case *query.StatePoolQueryMessage[K, A]:
-		return &EventOutboundGetClosestNodes[K, A]{
-			QueryID:  st.QueryID,
-			To:       NewNodeAddr[K, A](st.NodeID, nil),
-			Target:   st.Message.Target(),
-			Notifiee: r,
+		return &coord.EventOutboundGetClosestNodes[K, A]{
+			QueryID: st.QueryID,
+			To:      shim.NewNodeAddr[K, A](st.NodeID, nil),
+			Target:  st.Message.Target(),
+			Notify:  r,
 		}, true
 	case *query.StatePoolWaitingAtCapacity:
 		// nothing to do except wait for message response or timeout
@@ -161,7 +168,7 @@ func (r *PooledQueryBehaviour[K, A]) advancePool(ctx context.Context, ev query.P
 	case *query.StatePoolQueryFinished:
 		waiter, ok := r.waiters[st.QueryID]
 		if ok {
-			waiter.Notify(ctx, &EventQueryFinished{
+			waiter.Notify(ctx, &coord.EventQueryFinished{
 				QueryID: st.QueryID,
 				Stats:   st.Stats,
 			})

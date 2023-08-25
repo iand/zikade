@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/iand/zikade/internal/shim"
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/key"
 	"github.com/plprobelab/go-kademlia/network/address"
@@ -126,7 +127,7 @@ func Query[K kad.Key[K], A kad.Address[A]](ctx context.Context, d DHT[K, A], tar
 						return
 					case pending <- &query.EventQueryMessageResponse[K, A]{
 						NodeID:   node.ID(),
-						Response: ClosestNodesFakeResponse(target, closerInfos),
+						Response: shim.ClosestNodesFakeResponse(target, closerInfos),
 					}:
 					}
 				}()
@@ -169,28 +170,3 @@ var (
 	// SkipRemaining is used as a return value a QueryFunc to indicate that all remaining nodes are to be skipped.
 	SkipRemaining = errors.New("skip remaining nodes")
 )
-
-// ClosestNodesFakeResponse is a shim between query state machine events that expect a message and the newer style
-func ClosestNodesFakeResponse[K kad.Key[K], A kad.Address[A]](key K, nodes []kad.NodeInfo[K, A]) kad.Response[K, A] {
-	return &fakeMessage[K, A]{
-		key:   key,
-		nodes: nodes,
-	}
-}
-
-type fakeMessage[K kad.Key[K], A kad.Address[A]] struct {
-	key   K
-	nodes []kad.NodeInfo[K, A]
-}
-
-func (r fakeMessage[K, A]) Target() K {
-	return r.key
-}
-
-func (r fakeMessage[K, A]) CloserNodes() []kad.NodeInfo[K, A] {
-	return r.nodes
-}
-
-func (r fakeMessage[K, A]) EmptyResponse() kad.Response[K, A] {
-	return &fakeMessage[K, A]{}
-}

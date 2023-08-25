@@ -3,15 +3,22 @@ package dht
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ipfs/go-datastore/trace"
-
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
+	ma "github.com/multiformats/go-multiaddr"
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/key"
 	"golang.org/x/exp/slog"
+
+	"github.com/iand/zikade/coord"
+	zlibp2p "github.com/iand/zikade/libp2p"
+	znet "github.com/iand/zikade/network"
+	"github.com/iand/zikade/query"
+	"github.com/iand/zikade/routing"
 )
 
 // DHT is an implementation of Kademlia with S/Kademlia modifications.
@@ -30,7 +37,7 @@ type DHT struct {
 	mode   mode
 
 	// kad is a reference to the behaviour coordinator
-	coord *Coordinator
+	coord *coord.Coordinator[key.Key256, ma.Multiaddr]
 
 	// rt holds a reference to the routing table implementation. This can be
 	// configured via the Config struct.
@@ -107,8 +114,32 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		}
 	}
 
-	// TODO: implement create and pass the various behaviours
-	d.coord = NewCoordinator()
+	queryCfg := query.DefaultConfig()
+	queryCfg.Logger = d.log
+	queryBehaviour, err := query.NewPooledQueryBehaviour[key.Key256, ma.Multiaddr](nid, queryCfg)
+	if err != nil {
+		return nil, fmt.Errorf("query behaviour: %w", err)
+	}
+
+	routingCfg := routing.DefaultConfig[key.Key256, ma.Multiaddr]()
+	routingCfg.Logger = d.log
+	routingBehaviour, err := routing.NewRoutingBehaviour[key.Key256, ma.Multiaddr](nid, d.rt, routingCfg)
+	if err != nil {
+		return nil, fmt.Errorf("routing behaviour: %w", err)
+	}
+
+	networkCfg := znet.DefaultConfig()
+	networkCfg.Logger = d.log
+
+	// TODO: replace peerStoreTTL with configuration
+	peerStoreTTL := 10 * time.Minute
+	rtr := zlibp2p.NewRouter(d.host, peerStoreTTL)
+
+	networkBehaviour, err := znet.NewNetworkBehaviour[key.Key256, ma.Multiaddr](rtr, networkCfg)
+	if err != nil {
+		return nil, fmt.Errorf("network behaviour: %w", err)
+	}
+	d.coord = coord.NewCoordinator[key.Key256, ma.Multiaddr](routingBehaviour, networkBehaviour, queryBehaviour)
 
 	// determine mode to start in
 	switch cfg.Mode {

@@ -1,4 +1,4 @@
-package kademlia
+package coord
 
 import (
 	"context"
@@ -6,27 +6,19 @@ import (
 	"sync/atomic"
 )
 
-type Notifiee[C DhtEvent] interface {
+type Notify[C DhtEvent] interface {
 	Notify(ctx context.Context, ev C)
+}
+
+type NotifyCloser[C DhtEvent] interface {
+	Notify(ctx context.Context, ev C)
+	Close()
 }
 
 type NotifyFunc[C DhtEvent] func(ctx context.Context, ev C)
 
 func (f NotifyFunc[C]) Notify(ctx context.Context, ev C) {
 	f(ctx, ev)
-}
-
-type Behaviour[I DhtEvent, O DhtEvent] interface {
-	// Ready returns a channel that signals when the behaviour is ready to perform work.
-	Ready() <-chan struct{}
-
-	// Notify informs the behaviour of an event. The behaviour may perform the event
-	// immediately and queue the result, causing the behaviour to become ready.
-	Notify(ctx context.Context, ev I)
-
-	// Perform gives the behaviour the opportunity to perform work or to return a queued
-	// result as an event.
-	Perform(ctx context.Context) (O, bool)
 }
 
 type WorkQueueFunc[E DhtEvent] func(context.Context, E) bool
@@ -90,14 +82,14 @@ func (w *WorkQueue[E]) Enqueue(ctx context.Context, cmd E) error {
 	}
 }
 
-// A Waiter is a Notifiee whose Notify method forwards the
+// A Waiter is a Notify whose Notify method forwards the
 // notified event to a channel which a client can wait on.
 type Waiter[E DhtEvent] struct {
 	pending chan WaiterEvent[E]
 	done    atomic.Bool
 }
 
-var _ Notifiee[DhtEvent] = (*Waiter[DhtEvent])(nil)
+var _ Notify[DhtEvent] = (*Waiter[DhtEvent])(nil)
 
 func NewWaiter[E DhtEvent]() *Waiter[E] {
 	w := &Waiter[E]{

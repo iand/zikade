@@ -1,4 +1,4 @@
-package kademlia
+package routing
 
 import (
 	"context"
@@ -9,7 +9,9 @@ import (
 	"github.com/plprobelab/go-kademlia/key"
 	"github.com/plprobelab/go-kademlia/routing"
 	"github.com/plprobelab/go-kademlia/util"
-	"golang.org/x/exp/slog"
+
+	"github.com/iand/zikade/coord"
+	"github.com/iand/zikade/internal/shim"
 )
 
 type RoutingBehaviour[K kad.Key[K], A kad.Address[A]] struct {
@@ -20,32 +22,42 @@ type RoutingBehaviour[K kad.Key[K], A kad.Address[A]] struct {
 	include   *routing.Include[K, A]
 
 	pendingMu sync.Mutex
-	pending   []DhtEvent
+	pending   []coord.DhtEvent
 	ready     chan struct{}
 
-	logger *slog.Logger
+	cfg Config[K, A]
 }
 
-func NewRoutingBehaviour[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], bootstrap *routing.Bootstrap[K, A], include *routing.Include[K, A], logger *slog.Logger) *RoutingBehaviour[K, A] {
+func NewRoutingBehaviour[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], rt kad.RoutingTable[K, kad.NodeID[K]], cfg *Config[K, A]) (*RoutingBehaviour[K, A], error) {
+	bootstrap, err := routing.NewBootstrap[K, A](self, cfg.Bootstrap)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: %w", err)
+	}
+
+	include, err := routing.NewInclude[K, A](rt, cfg.Include)
+	if err != nil {
+		return nil, fmt.Errorf("include: %w", err)
+	}
+
 	r := &RoutingBehaviour[K, A]{
 		self:      self,
 		bootstrap: bootstrap,
 		include:   include,
 		ready:     make(chan struct{}, 1),
-		logger:    logger,
+		cfg:       *cfg,
 	}
-	return r
+	return r, nil
 }
 
-func (r *RoutingBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
-	ctx, span := util.StartSpan(ctx, "RoutingBehaviour.Perform")
+func (r *RoutingBehaviour[K, A]) Notify(ctx context.Context, ev coord.DhtEvent) {
+	ctx, span := util.StartSpan(ctx, "RoutingBehaviour.Notify")
 	defer span.End()
 
 	r.pendingMu.Lock()
 	defer r.pendingMu.Unlock()
 
 	switch ev := ev.(type) {
-	case *EventDhtStartBootstrap[K, A]:
+	case *coord.EventDhtStartBootstrap[K, A]:
 		cmd := &routing.EventBootstrapStart[K, A]{
 			ProtocolID:        ev.ProtocolID,
 			Message:           ev.Message,
@@ -57,7 +69,7 @@ func (r *RoutingBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
 			r.pending = append(r.pending, next)
 		}
 
-	case *EventDhtAddNodeInfo[K, A]:
+	case *coord.EventDhtAddNodeInfo[K, A]:
 		// Ignore self
 		if key.Equal(ev.NodeInfo.ID().Key(), r.self.Key()) {
 			break
@@ -71,18 +83,18 @@ func (r *RoutingBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
 			r.pending = append(r.pending, next)
 		}
 
-	case *EventGetClosestNodesSuccess[K, A]:
+	case *coord.EventGetClosestNodesSuccess[K, A]:
 		switch ev.QueryID {
 		case "bootstrap":
 			for _, info := range ev.ClosestNodes {
 				// TODO: do this after advancing bootstrap
-				r.pending = append(r.pending, &EventDhtAddNodeInfo[K, A]{
+				r.pending = append(r.pending, &coord.EventDhtAddNodeInfo[K, A]{
 					NodeInfo: info,
 				})
 			}
 			cmd := &routing.EventBootstrapMessageResponse[K, A]{
 				NodeID:   ev.To.ID(),
-				Response: ClosestNodesFakeResponse(ev.Target, ev.ClosestNodes),
+				Response: shim.ClosestNodesFakeResponse(ev.Target, ev.ClosestNodes),
 			}
 			// attempt to advance the bootstrap
 			next, ok := r.advanceBootstrap(ctx, cmd)
@@ -93,7 +105,7 @@ func (r *RoutingBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
 		case "include":
 			cmd := &routing.EventIncludeMessageResponse[K, A]{
 				NodeInfo: ev.To,
-				Response: ClosestNodesFakeResponse(ev.Target, ev.ClosestNodes),
+				Response: shim.ClosestNodesFakeResponse(ev.Target, ev.ClosestNodes),
 			}
 			// attempt to advance the include
 			next, ok := r.advanceInclude(ctx, cmd)
@@ -104,7 +116,7 @@ func (r *RoutingBehaviour[K, A]) Notify(ctx context.Context, ev DhtEvent) {
 		default:
 			panic(fmt.Sprintf("unexpected query id: %s", ev.QueryID))
 		}
-	case *EventGetClosestNodesFailure[K, A]:
+	case *coord.EventGetClosestNodesFailure[K, A]:
 		switch ev.QueryID {
 		case "bootstrap":
 			cmd := &routing.EventBootstrapMessageFailure[K]{
@@ -146,7 +158,7 @@ func (r *RoutingBehaviour[K, A]) Ready() <-chan struct{} {
 	return r.ready
 }
 
-func (r *RoutingBehaviour[K, A]) Perform(ctx context.Context) (DhtEvent, bool) {
+func (r *RoutingBehaviour[K, A]) Perform(ctx context.Context) (coord.DhtEvent, bool) {
 	ctx, span := util.StartSpan(ctx, "RoutingBehaviour.Perform")
 	defer span.End()
 
@@ -157,7 +169,7 @@ func (r *RoutingBehaviour[K, A]) Perform(ctx context.Context) (DhtEvent, bool) {
 	for {
 		// drain queued events first.
 		if len(r.pending) > 0 {
-			var ev DhtEvent
+			var ev coord.DhtEvent
 			ev, r.pending = r.pending[0], r.pending[1:]
 
 			if len(r.pending) > 0 {
@@ -174,17 +186,17 @@ func (r *RoutingBehaviour[K, A]) Perform(ctx context.Context) (DhtEvent, bool) {
 		switch st := bstate.(type) {
 
 		case *routing.StateBootstrapMessage[K, A]:
-			return &EventOutboundGetClosestNodes[K, A]{
-				QueryID:  "bootstrap",
-				To:       NewNodeAddr[K, A](st.NodeID, nil),
-				Target:   st.Message.Target(),
-				Notifiee: r,
+			return &coord.EventOutboundGetClosestNodes[K, A]{
+				QueryID: "bootstrap",
+				To:      shim.NewNodeAddr[K, A](st.NodeID, nil),
+				Target:  st.Message.Target(),
+				Notify:  r,
 			}, true
 
 		case *routing.StateBootstrapWaiting:
 			// bootstrap waiting for a message response, nothing to do
 		case *routing.StateBootstrapFinished:
-			return &EventBootstrapFinished{
+			return &coord.EventBootstrapFinished{
 				Stats: st.Stats,
 			}, true
 		case *routing.StateBootstrapIdle:
@@ -198,16 +210,16 @@ func (r *RoutingBehaviour[K, A]) Perform(ctx context.Context) (DhtEvent, bool) {
 		switch st := istate.(type) {
 		case *routing.StateIncludeFindNodeMessage[K, A]:
 			// include wants to send a find node message to a node
-			return &EventOutboundGetClosestNodes[K, A]{
-				QueryID:  "include",
-				To:       st.NodeInfo,
-				Target:   st.NodeInfo.ID().Key(),
-				Notifiee: r,
+			return &coord.EventOutboundGetClosestNodes[K, A]{
+				QueryID: "include",
+				To:      st.NodeInfo,
+				Target:  st.NodeInfo.ID().Key(),
+				Notify:  r,
 			}, true
 
 		case *routing.StateIncludeRoutingUpdated[K, A]:
 			// a node has been included in the routing table
-			return &EventRoutingUpdated[K, A]{
+			return &coord.EventRoutingUpdated[K, A]{
 				NodeInfo: st.NodeInfo,
 			}, true
 		case *routing.StateIncludeWaitingAtCapacity:
@@ -228,24 +240,24 @@ func (r *RoutingBehaviour[K, A]) Perform(ctx context.Context) (DhtEvent, bool) {
 	}
 }
 
-func (r *RoutingBehaviour[K, A]) advanceBootstrap(ctx context.Context, ev routing.BootstrapEvent) (DhtEvent, bool) {
+func (r *RoutingBehaviour[K, A]) advanceBootstrap(ctx context.Context, ev routing.BootstrapEvent) (coord.DhtEvent, bool) {
 	ctx, span := util.StartSpan(ctx, "RoutingBehaviour.advanceBootstrap")
 	defer span.End()
 	bstate := r.bootstrap.Advance(ctx, ev)
 	switch st := bstate.(type) {
 
 	case *routing.StateBootstrapMessage[K, A]:
-		return &EventOutboundGetClosestNodes[K, A]{
-			QueryID:  "bootstrap",
-			To:       NewNodeAddr[K, A](st.NodeID, nil),
-			Target:   st.Message.Target(),
-			Notifiee: r,
+		return &coord.EventOutboundGetClosestNodes[K, A]{
+			QueryID: "bootstrap",
+			To:      shim.NewNodeAddr[K, A](st.NodeID, nil),
+			Target:  st.Message.Target(),
+			Notify:  r,
 		}, true
 
 	case *routing.StateBootstrapWaiting:
 		// bootstrap waiting for a message response, nothing to do
 	case *routing.StateBootstrapFinished:
-		return &EventBootstrapFinished{
+		return &coord.EventBootstrapFinished{
 			Stats: st.Stats,
 		}, true
 	case *routing.StateBootstrapIdle:
@@ -257,23 +269,23 @@ func (r *RoutingBehaviour[K, A]) advanceBootstrap(ctx context.Context, ev routin
 	return nil, false
 }
 
-func (r *RoutingBehaviour[K, A]) advanceInclude(ctx context.Context, ev routing.IncludeEvent) (DhtEvent, bool) {
+func (r *RoutingBehaviour[K, A]) advanceInclude(ctx context.Context, ev routing.IncludeEvent) (coord.DhtEvent, bool) {
 	ctx, span := util.StartSpan(ctx, "RoutingBehaviour.advanceInclude")
 	defer span.End()
 	istate := r.include.Advance(ctx, ev)
 	switch st := istate.(type) {
 	case *routing.StateIncludeFindNodeMessage[K, A]:
 		// include wants to send a find node message to a node
-		return &EventOutboundGetClosestNodes[K, A]{
-			QueryID:  "include",
-			To:       st.NodeInfo,
-			Target:   st.NodeInfo.ID().Key(),
-			Notifiee: r,
+		return &coord.EventOutboundGetClosestNodes[K, A]{
+			QueryID: "include",
+			To:      st.NodeInfo,
+			Target:  st.NodeInfo.ID().Key(),
+			Notify:  r,
 		}, true
 
 	case *routing.StateIncludeRoutingUpdated[K, A]:
 		// a node has been included in the routing table
-		return &EventRoutingUpdated[K, A]{
+		return &coord.EventRoutingUpdated[K, A]{
 			NodeInfo: st.NodeInfo,
 		}, true
 	case *routing.StateIncludeWaitingAtCapacity:

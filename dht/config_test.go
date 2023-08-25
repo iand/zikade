@@ -25,18 +25,18 @@ func TestConfig_Validate(t *testing.T) {
 			},
 		},
 		{
-			name:    "nil Kademlia configuration",
+			name:    "nil Coordinator configuration",
 			wantErr: true,
 			mutate: func(c *Config) *Config {
-				c.Kademlia = nil
+				c.Coordinator = nil
 				return c
 			},
 		},
 		{
-			name:    "invalid Kademlia configuration",
+			name:    "invalid Coordinator configuration",
 			wantErr: true,
 			mutate: func(c *Config) *Config {
-				c.Kademlia.Clock = nil
+				c.Coordinator.Clock = nil
 				return c
 			},
 		},

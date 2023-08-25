@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/iand/zikade/kademlia"
 	ds "github.com/ipfs/go-datastore"
 	leveldb "github.com/ipfs/go-ds-leveldb"
 	logging "github.com/ipfs/go-log/v2"
@@ -17,6 +16,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap/exp/zapslog"
 	"golang.org/x/exp/slog"
+
+	"github.com/iand/zikade/coord"
 )
 
 // ServiceName is used to scope incoming streams for the resource manager.
@@ -107,8 +108,8 @@ type Config struct {
 	// between both automatically (see ModeOpt).
 	Mode ModeOpt
 
-	// Kademlia holds the configuration of the underlying Kademlia implementation.
-	Kademlia *kademlia.Config
+	// Coordinator holds the configuration of the underlying behaviour coordinator.
+	Coordinator *coord.Config
 
 	// BucketSize determines the number of closer peers to return
 	BucketSize int
@@ -164,7 +165,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Mode:              ModeOptAutoClient,
-		Kademlia:          kademlia.DefaultConfig(),
+		Coordinator:       coord.DefaultConfig(),
 		BucketSize:        20,
 		ProtocolID:        ProtocolIPFS,
 		RoutingTable:      nil, // nil because a routing table requires information about the local node. triert.TrieRT will be used if this field is nil.
@@ -206,11 +207,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid mode option: %s", c.Mode)
 	}
 
-	if c.Kademlia == nil {
+	if c.Coordinator == nil {
 		return fmt.Errorf("kademlia configuration must not be nil")
 	}
 
-	if err := c.Kademlia.Validate(); err != nil {
+	if err := c.Coordinator.Validate(); err != nil {
 		return fmt.Errorf("invalid kademlia configuration: %w", err)
 	}
 

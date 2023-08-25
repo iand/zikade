@@ -1,4 +1,4 @@
-package kademlia
+package network
 
 import (
 	"context"
