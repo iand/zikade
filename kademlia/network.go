@@ -95,7 +95,7 @@ func (b *NetworkBehaviour[K, A]) getNodeHandler(ctx context.Context, id kad.Node
 	nodeKey := key.HexString(id.Key())
 	b.nodeHandlersMu.Lock()
 	nh, ok := b.nodeHandlers[nodeKey]
-	if !ok {
+	if !ok || len(nh.Addresses()) == 0 {
 		info, err := b.rtr.GetNodeInfo(ctx, id)
 		if err != nil {
 			return nil, err
