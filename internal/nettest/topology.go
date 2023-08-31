@@ -9,12 +9,13 @@ import (
 	"github.com/plprobelab/go-kademlia/kad"
 	"github.com/plprobelab/go-kademlia/key"
 	"github.com/plprobelab/go-kademlia/network/address"
+	"github.com/plprobelab/go-kademlia/routing"
 )
 
 type Node[K kad.Key[K], A kad.Address[A]] struct {
 	NodeInfo     kad.NodeInfo[K, A]
 	Router       *Router[K, A]
-	RoutingTable kad.RoutingTable[K, kad.NodeID[K]]
+	RoutingTable routing.RoutingTableCpl[K, kad.NodeID[K]]
 }
 
 type Topology[K kad.Key[K], A kad.Address[A]] struct {
