@@ -318,19 +318,19 @@ func (r *RoutingBehaviour[K, A]) advanceProbe(ctx context.Context, ev routing.Pr
 	defer span.End()
 	st := r.probe.Advance(ctx, ev)
 	switch st := st.(type) {
-	case *routing.StateProbeConnectivityCheck[K, A]:
+	case *routing.StateProbeConnectivityCheck[K]:
 		// include wants to send a find node message to a node
 		return &EventOutboundGetClosestNodes[K, A]{
 			QueryID:  "probe",
-			To:       st.NodeInfo,
-			Target:   st.NodeInfo.ID().Key(),
+			To:       unaddressedNodeInfo[K, A]{NodeID: st.NodeID},
+			Target:   st.NodeID.Key(),
 			Notifiee: r,
 		}, true
-	case *routing.StateProbeNodeFailure[K, A]:
+	case *routing.StateProbeNodeFailure[K]:
 		// a node has failed a connectivity check been removed from the routing table and the probe list
 		// add the node to the inclusion list for a second chance
 		r.notify(ctx, &EventDhtAddNodeInfo[K, A]{
-			NodeInfo: st.NodeInfo,
+			NodeInfo: unaddressedNodeInfo[K, A]{NodeID: st.NodeID},
 		})
 	case *routing.StateProbeWaitingAtCapacity:
 		// the probe state machine is waiting for responses for checks and the maximum number of concurrent checks has been reached.
@@ -347,3 +347,10 @@ func (r *RoutingBehaviour[K, A]) advanceProbe(ctx context.Context, ev routing.Pr
 
 	return nil, false
 }
+
+type unaddressedNodeInfo[K kad.Key[K], A kad.Address[A]] struct {
+	NodeID kad.NodeID[K]
+}
+
+func (u unaddressedNodeInfo[K, A]) ID() kad.NodeID[K] { return u.NodeID }
+func (u unaddressedNodeInfo[K, A]) Addresses() []A    { return nil }

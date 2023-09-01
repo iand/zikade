@@ -9,8 +9,9 @@ require (
 	github.com/libp2p/go-msgio v0.3.0
 	github.com/multiformats/go-multiaddr v0.11.0
 	github.com/multiformats/go-multihash v0.2.3
-	github.com/plprobelab/go-kademlia v0.0.0-20230823114513-9b9e606066c9
+	github.com/plprobelab/go-kademlia v0.0.0-20230901130940-286ab4ceca60
 	github.com/stretchr/testify v1.8.4
+	go.opentelemetry.io/otel v1.16.0
 	go.uber.org/zap/exp v0.1.0
 	golang.org/x/exp v0.0.0-20230817173708-d852ddb80c63
 	google.golang.org/protobuf v1.31.0
@@ -84,7 +85,6 @@ require (
 	github.com/quic-go/webtransport-go v0.5.3 // indirect
 	github.com/raulk/go-watchdog v1.3.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	go.opentelemetry.io/otel v1.16.0 // indirect
 	go.opentelemetry.io/otel/metric v1.16.0 // indirect
 	go.opentelemetry.io/otel/trace v1.16.0 // indirect
 	go.uber.org/dig v1.17.0 // indirect
