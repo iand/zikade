@@ -22,11 +22,16 @@ type Behaviour[I DhtEvent, O DhtEvent] interface {
 
 	// Notify informs the behaviour of an event. The behaviour may perform the event
 	// immediately and queue the result, causing the behaviour to become ready.
+	// It is safe to call Notify from the Perform method.
 	Notify(ctx context.Context, ev I)
 
 	// Perform gives the behaviour the opportunity to perform work or to return a queued
 	// result as an event.
 	Perform(ctx context.Context) (O, bool)
+}
+
+type SM[E any, S any] interface {
+	Advance(context.Context, E) S
 }
 
 type WorkQueueFunc[E DhtEvent] func(context.Context, E) bool

@@ -123,7 +123,7 @@ func DefaultConfig() *Config {
 	}
 }
 
-func NewDht[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], rtr Router[K, A], rt kad.RoutingTable[K, kad.NodeID[K]], cfg *Config) (*Dht[K, A], error) {
+func NewDht[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], rtr Router[K, A], rt routing.RoutingTableCpl[K, kad.NodeID[K]], cfg *Config) (*Dht[K, A], error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	} else if err := cfg.Validate(); err != nil {
@@ -168,7 +168,18 @@ func NewDht[K kad.Key[K], A kad.Address[A]](self kad.NodeID[K], rtr Router[K, A]
 		return nil, fmt.Errorf("include: %w", err)
 	}
 
-	routingBehaviour := NewRoutingBehaviour(self, bootstrap, include, cfg.Logger)
+	probeCfg := routing.DefaultProbeConfig()
+	probeCfg.Clock = cfg.Clock
+	probeCfg.Timeout = cfg.QueryTimeout
+
+	// TODO: expose config
+	// probeCfg.Concurrency = cfg.ProbeConcurrency
+	probe, err := routing.NewProbe[K, A](rt, probeCfg)
+	if err != nil {
+		return nil, fmt.Errorf("include: %w", err)
+	}
+
+	routingBehaviour := NewRoutingBehaviour[K, A](self, bootstrap, include, probe, cfg.Logger)
 
 	networkBehaviour := NewNetworkBehaviour(rtr, cfg.Logger)
 
