@@ -3,6 +3,7 @@ package zikade
 import (
 	"context"
 	"io"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +15,6 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slog"
 
 	"github.com/probe-lab/zikade/internal/kadtest"
 )

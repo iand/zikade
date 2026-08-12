@@ -2,10 +2,10 @@ package coord
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/exp/slog"
 
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
 	"github.com/probe-lab/zikade/internal/coord/coordt"

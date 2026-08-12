@@ -1,10 +1,11 @@
 package tele
 
 import (
+	"log/slog"
+
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/probe-lab/zikade/kadt"
 	"go.uber.org/zap/exp/zapslog"
-	"golang.org/x/exp/slog"
 )
 
 func DefaultLogger(name string) *slog.Logger {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -17,7 +18,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/routing"
 	"go.opentelemetry.io/otel/attribute"
 	otel "go.opentelemetry.io/otel/trace"
-	"golang.org/x/exp/slog"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/kadt"

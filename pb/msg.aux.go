@@ -3,12 +3,12 @@ package pb
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	math_bits "math/bits"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/probe-lab/zikade/kadt"
-	"golang.org/x/exp/slog"
 )
 
 // this file contains auxiliary methods to augment the protobuf generated types.

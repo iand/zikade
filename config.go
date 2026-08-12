@@ -2,6 +2,7 @@ package zikade
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/benbjohnson/clock"
@@ -17,7 +18,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap/exp/zapslog"
-	"golang.org/x/exp/slog"
 
 	"github.com/probe-lab/zikade/internal/coord/routing"
 	"github.com/probe-lab/zikade/kadt"

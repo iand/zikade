@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	ds "github.com/ipfs/go-datastore"
 	record "github.com/libp2p/go-libp2p-record"
@@ -12,7 +13,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"go.opentelemetry.io/otel/attribute"
 	otel "go.opentelemetry.io/otel/trace"
-	"golang.org/x/exp/slog"
 
 	"github.com/probe-lab/zikade/kadt"
 	"github.com/probe-lab/zikade/pb"

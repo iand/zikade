@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +19,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/multiformats/go-base32"
 	"go.opentelemetry.io/otel/metric"
-	"golang.org/x/exp/slog"
 
 	"github.com/probe-lab/zikade/tele"
 )

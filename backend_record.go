@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/benbjohnson/clock"
 	ds "github.com/ipfs/go-datastore"
 	record "github.com/libp2p/go-libp2p-record"
 	recpb "github.com/libp2p/go-libp2p-record/pb"
-	"golang.org/x/exp/slog"
 )
 
 type RecordBackend struct {
