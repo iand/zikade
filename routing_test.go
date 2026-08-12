@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/benbjohnson/clock"
@@ -122,35 +123,32 @@ func TestDHT_FindPeer_already_connected(t *testing.T) {
 }
 
 func TestDHT_PutValue_happy_path(t *testing.T) {
-	// TIMING: this test is based on timeouts - so might become flaky!
-	ctx := kadtest.CtxShort(t)
+	synctest.Test(t, func(t *testing.T) {
+		ctx := kadtest.CtxBubble(t)
 
-	top := NewTopology(t)
-	d1 := top.AddServer(nil)
-	d2 := top.AddServer(nil)
+		top := NewBubbleTopology(t)
+		d1 := top.AddServer(nil)
+		d2 := top.AddServer(nil)
 
-	top.ConnectChain(ctx, d1, d2)
+		top.ConnectChain(ctx, d1, d2)
 
-	k, v := makePkKeyValue(t)
+		k, v := makePkKeyValue(t)
 
-	err := d1.PutValue(ctx, k, v)
-	require.NoError(t, err)
+		err := d1.PutValue(ctx, k, v)
+		require.NoError(t, err)
 
-	deadline, hasDeadline := ctx.Deadline()
-	if !hasDeadline {
-		deadline = time.Now().Add(5 * time.Second)
-	}
+		// putting data to a remote peer is an asynchronous operation. Even after
+		// PutValue returns, and although we have closed the stream on our end, an
+		// acknowledgement that the other peer has received the data is not
+		// guaranteed. The data will be flushed at this point, but the remote might
+		// not have handled it yet. Waiting for the bubble to settle is exactly the
+		// condition the test needs.
+		synctest.Wait()
 
-	// putting data to a remote peer is an asynchronous operation. Even after
-	// PutValue returns, and although we have closed the stream on our end, an
-	// acknowledgement that the other peer has received the data is not
-	// guaranteed. The data will be flushed at this point, but the remote might
-	// not have handled it yet. Therefore, we use "EventuallyWithT" here.
-	assert.EventuallyWithT(t, func(t *assert.CollectT) {
 		val, err := d2.GetValue(ctx, k, routing.Offline)
-		assert.NoError(t, err)
-		assert.Equal(t, v, val)
-	}, time.Until(deadline), 10*time.Millisecond)
+		require.NoError(t, err)
+		require.Equal(t, v, val)
+	})
 }
 
 func TestDHT_PutValue_local_only(t *testing.T) {
@@ -919,38 +917,33 @@ func TestDHT_SearchValue_offline_not_found_locally(t *testing.T) {
 }
 
 func TestDHT_Bootstrap_no_peers_configured(t *testing.T) {
-	// TIMING: this test is based on timeouts - so might become flaky!
-	ctx := kadtest.CtxShort(t)
+	synctest.Test(t, func(t *testing.T) {
+		ctx := kadtest.CtxBubble(t)
 
-	top := NewTopology(t)
-	d1 := top.AddServer(nil)
-	d2 := top.AddServer(nil)
-	d3 := top.AddServer(nil)
+		top := NewBubbleTopology(t)
+		d1 := top.AddServer(nil)
+		d2 := top.AddServer(nil)
+		d3 := top.AddServer(nil)
 
-	d1.cfg.BootstrapPeers = []peer.AddrInfo{
-		{ID: d2.host.ID(), Addrs: d2.host.Addrs()},
-		{ID: d3.host.ID(), Addrs: d3.host.Addrs()},
-	}
+		d1.cfg.BootstrapPeers = []peer.AddrInfo{
+			{ID: d2.host.ID(), Addrs: d2.host.Addrs()},
+			{ID: d3.host.ID(), Addrs: d3.host.Addrs()},
+		}
 
-	err := d1.Bootstrap(ctx)
-	assert.NoError(t, err)
+		err := d1.Bootstrap(ctx)
+		require.NoError(t, err)
 
-	deadline, hasDeadline := ctx.Deadline()
-	if !hasDeadline {
-		deadline = time.Now().Add(5 * time.Second)
-	}
+		// bootstrapping is an asynchronous process, wait for it to finish
+		synctest.Wait()
 
-	// bootstrapping is an asynchronous process, so we periodically check
-	// if the peers have each other in their routing tables
-	assert.EventuallyWithT(t, func(collect *assert.CollectT) {
 		_, found := d1.rt.GetNode(kadt.PeerID(d2.host.ID()).Key())
-		assert.True(collect, found)
+		require.True(t, found)
 		_, found = d1.rt.GetNode(kadt.PeerID(d3.host.ID()).Key())
-		assert.True(collect, found)
+		require.True(t, found)
 
 		_, found = d2.rt.GetNode(kadt.PeerID(d1.host.ID()).Key())
-		assert.True(collect, found)
+		require.True(t, found)
 		_, found = d3.rt.GetNode(kadt.PeerID(d1.host.ID()).Key())
-		assert.True(collect, found)
-	}, time.Until(deadline), 10*time.Millisecond)
+		require.True(t, found)
+	})
 }

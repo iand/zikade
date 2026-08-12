@@ -29,6 +29,23 @@ type Topology struct {
 	rns  map[string]*coord.BufferedRoutingNotifier
 }
 
+// NewBubbleTopology returns a Topology for a test running inside a
+// [testing/synctest] bubble. Everything it builds must be built inside the
+// bubble so that the goroutines belong to it.
+//
+// It exists to schedule one extra step at teardown. Each DHT owns an in-memory
+// leveldb whose pool drain goroutine finishes shutting down by waiting on
+// time.After(time.Second). That timer belongs to the bubble, and time stops
+// advancing the moment the root goroutine exits, so without a final sleep on
+// fake time the goroutine never exits and synctest.Test reports a deadlock.
+// Cleanup functions run last-registered-first, so registering the sleep before
+// any DHT exists puts it after every close.
+func NewBubbleTopology(tb testing.TB) *Topology {
+	tb.Cleanup(func() { time.Sleep(2 * time.Second) })
+
+	return NewTopology(tb)
+}
+
 func NewTopology(tb testing.TB) *Topology {
 	mn := mocknet.New()
 	tb.Cleanup(func() {
