@@ -103,12 +103,10 @@ func TestDHT_Close_idempotent(t *testing.T) {
 	d := newTestDHT(t)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
+	for range 10 {
+		wg.Go(func() {
 			assert.NoError(t, d.Close())
-			wg.Done()
-		}()
+		})
 	}
 	wg.Wait()
 }

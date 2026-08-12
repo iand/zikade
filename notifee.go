@@ -13,7 +13,7 @@ import (
 // for several events. The DHT uses these events for various tasks like routing
 // table or DHT mode updates.
 func (d *DHT) networkEventsSubscription() (event.Subscription, error) {
-	evts := []interface{}{
+	evts := []any{
 		// register for event bus notifications of when peers successfully
 		// complete identification in order to update the routing table.
 		new(event.EvtPeerIdentificationCompleted),

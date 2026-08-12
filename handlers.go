@@ -169,7 +169,6 @@ func (d *DHT) handleAddProvider(ctx context.Context, remote peer.ID, req *pb.Mes
 
 	var addrInfos []peer.AddrInfo
 	for _, addrInfo := range req.ProviderAddrInfos() {
-		addrInfo := addrInfo // TODO: remove after go.mod was updated to go 1.21
 
 		if addrInfo.ID != remote {
 			return nil, fmt.Errorf("attempted to store provider record for other peer %s", addrInfo.ID)

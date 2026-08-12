@@ -51,7 +51,7 @@ func BenchmarkDHT_handleFindPeer(b *testing.B) {
 
 	// build routing table
 	var peers []peer.ID
-	for i := 0; i < 250; i++ {
+	for i := range 250 {
 
 		// generate peer ID
 		pid := newPeerID(b)
@@ -98,7 +98,7 @@ func TestDHT_handleFindPeer_happy_path(t *testing.T) {
 
 	// build routing table
 	peers := make([]peer.ID, 250)
-	for i := 0; i < 250; i++ {
+	for i := range 250 {
 		// generate peer ID
 		pid := newPeerID(t)
 
@@ -294,7 +294,7 @@ func TestDHT_handleFindPeer_request_for_known_but_far_peer(t *testing.T) {
 
 	// build routing table
 	peers := make([]peer.ID, 250)
-	for i := 0; i < 250; i++ {
+	for i := range 250 {
 		// generate peer ID
 		pid := newPeerID(t)
 
@@ -476,7 +476,7 @@ func TestDHT_handlePutValue_nil_records(t *testing.T) {
 	for _, ns := range []string{namespaceIPNS, namespacePublicKey} {
 		req := &pb.Message{
 			Type:   pb.Message_PUT_VALUE,
-			Key:    []byte(fmt.Sprintf("/%s/random-key", ns)),
+			Key:    fmt.Appendf(nil, "/%s/random-key", ns),
 			Record: nil, // nil record
 		}
 
@@ -492,8 +492,8 @@ func TestDHT_handlePutValue_record_key_mismatch(t *testing.T) {
 
 	for _, ns := range []string{namespaceIPNS, namespacePublicKey} {
 		t.Run(ns, func(t *testing.T) {
-			key1 := []byte(fmt.Sprintf("/%s/key-1", ns))
-			key2 := []byte(fmt.Sprintf("/%s/key-2", ns))
+			key1 := fmt.Appendf(nil, "/%s/key-1", ns)
+			key2 := fmt.Appendf(nil, "/%s/key-2", ns)
 
 			req := &pb.Message{
 				Type: pb.Message_PUT_VALUE,
@@ -557,24 +557,20 @@ func TestDHT_handlePutValue_probe_race_condition(t *testing.T) {
 
 	remote, priv := newIdentity(t)
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 
 		req1 := newPutIPNSRequest(t, d.cfg.Clock, priv, uint64(2*i), time.Hour)
 		req2 := newPutIPNSRequest(t, d.cfg.Clock, priv, uint64(2*i+1), time.Hour)
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
+		wg.Go(func() {
 			_, _ = d.handlePutValue(context.Background(), remote, req1)
-			wg.Done()
-		}()
+		})
 
-		wg.Add(1)
-		go func() {
+		wg.Go(func() {
 			_, err := d.handlePutValue(context.Background(), remote, req2)
 			assert.NoError(t, err)
-			wg.Done()
-		}()
+		})
 		wg.Wait()
 
 		// an IPNS record key has the form /ipns/$binary_id where $binary_id
@@ -676,8 +672,7 @@ func TestDHT_handlePutValue_unknown_backend(t *testing.T) {
 
 func TestDHT_handlePutValue_moved_from_v1_bad_proto_message(t *testing.T) {
 	// Test moved from v1 to v2 - original name TestBadProtoMessages in dht_test.go
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	d := newTestDHT(t)
 
@@ -728,8 +723,7 @@ func (atomicPutValidator) Select(_ string, bs [][]byte) (int, error) {
 func TestDHT_handlePutValue_moved_from_v1_atomic_operation(t *testing.T) {
 	// Test moved from v1 to v2 - original name TestAtomicPut in dht_test.go
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	dstore, err := InMemoryDatastore()
 	require.NoError(t, err)
@@ -881,7 +875,7 @@ func TestDHT_handleGetValue_record_not_found(t *testing.T) {
 		t.Run(ns, func(t *testing.T) {
 			req := &pb.Message{
 				Type: pb.Message_GET_VALUE,
-				Key:  []byte(fmt.Sprintf("/%s/unknown-record-key", ns)),
+				Key:  fmt.Appendf(nil, "/%s/unknown-record-key", ns),
 			}
 
 			resp, err := d.handleGetValue(context.Background(), newPeerID(t), req)
@@ -906,7 +900,7 @@ func TestDHT_handleGetValue_corrupt_record_in_datastore(t *testing.T) {
 			rbe, err := typedBackend[*RecordBackend](d, ns)
 			require.NoError(t, err)
 
-			key := []byte(fmt.Sprintf("/%s/record-key", ns))
+			key := fmt.Appendf(nil, "/%s/record-key", ns)
 
 			dsKey := newDatastoreKey(ns, "record-key")
 			err = rbe.datastore.Put(context.Background(), dsKey, []byte("corrupt-data"))
@@ -1117,7 +1111,7 @@ func BenchmarkDHT_handleAddProvider_unique_peers(b *testing.B) {
 	reqs := make([]*pb.Message, b.N)
 	for i := 0; i < b.N; i++ {
 		addrInfo := newAddrInfo(b)
-		req := newAddProviderRequest([]byte(fmt.Sprintf("key-%d", i)), addrInfo)
+		req := newAddProviderRequest(fmt.Appendf(nil, "key-%d", i), addrInfo)
 		peers[i] = addrInfo.ID
 		reqs[i] = req
 	}

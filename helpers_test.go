@@ -97,7 +97,7 @@ func newIdentity(t testing.TB) (peer.ID, crypto.PrivKey) {
 func fillRoutingTable(t testing.TB, d *DHT, n int) {
 	t.Helper()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// generate peer ID
 		pid := newPeerID(t)
 

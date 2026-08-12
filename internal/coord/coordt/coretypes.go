@@ -59,7 +59,7 @@ var (
 	ErrSkipRemaining = errors.New("skip remaining nodes")
 )
 
-type Message interface{}
+type Message any
 
 type Router[K kad.Key[K], N kad.NodeID[K], M Message] interface {
 	// SendMessage attempts to send a request to another node. This method blocks until a response is received or an error is encountered.

@@ -476,7 +476,7 @@ func RoutingQuorum(n int) routing.Option {
 		}
 
 		if opts.Other == nil {
-			opts.Other = make(map[interface{}]interface{}, 1)
+			opts.Other = make(map[any]any, 1)
 		}
 
 		opts.Other[quorumOptionKey{}] = n

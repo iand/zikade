@@ -334,7 +334,7 @@ func TestDHT_FindProvidersAsync_returns_only_count_from_local_store(t *testing.T
 	// invariant for this test
 	assert.Less(t, requestedCount, storedCount)
 
-	for i := 0; i < storedCount; i++ {
+	for range storedCount {
 		provider := peer.AddrInfo{ID: newPeerID(t)}
 		_, err := d.backends[namespaceProviders].Store(ctx, string(c.Hash()), provider)
 		require.NoError(t, err)
@@ -398,7 +398,7 @@ func TestDHT_FindProvidersAsync_respects_cancelled_context_for_local_query(t *te
 	c := newRandomContent(t)
 
 	providersCount := 50
-	for i := 0; i < providersCount; i++ {
+	for range providersCount {
 		provider := peer.AddrInfo{ID: newPeerID(t)}
 		_, err := d.backends[namespaceProviders].Store(ctx, string(c.Hash()), provider)
 		require.NoError(t, err)
@@ -682,7 +682,7 @@ func (suite *SearchValueQuorumTestSuite) SetupTest() {
 
 	// init remaining ones
 	suite.servers = make([]*DHT, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		suite.servers[i] = top.AddServer(cfg)
 	}
 

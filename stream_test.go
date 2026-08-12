@@ -148,7 +148,7 @@ func TestDHT_handleStream_supported_but_unregistered_message_type(t *testing.T) 
 
 	req := &pb.Message{
 		Type: pb.Message_GET_PROVIDERS,
-		Key:  []byte(fmt.Sprintf("/%s/random-key", namespaceProviders)),
+		Key:  fmt.Appendf(nil, "/%s/random-key", namespaceProviders),
 	}
 
 	err = trw.WriteMsg(req)

@@ -96,21 +96,17 @@ func TestProvidersBackend_GarbageCollection_lifecycle_thread_safe(t *testing.T) 
 	b := newBackendProvider(t, cfg)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		for i := 0; i < 100; i++ {
+	wg.Go(func() {
+		for range 100 {
 			b.StartGarbageCollection()
 		}
-		wg.Done()
-	}()
+	})
 
-	wg.Add(1)
-	go func() {
-		for i := 0; i < 100; i++ {
+	wg.Go(func() {
+		for range 100 {
 			b.StopGarbageCollection()
 		}
-		wg.Done()
-	}()
+	})
 	wg.Wait()
 
 	b.StopGarbageCollection()

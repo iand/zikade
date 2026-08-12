@@ -29,7 +29,7 @@ func TestPrefix(t *testing.T) {
 	for _, tc := range testCases {
 		k := makeKeyWithPrefix(tc)
 
-		for cpl := 0; cpl < 15; cpl++ {
+		for cpl := range 15 {
 			p := prefix(k, cpl)
 			k2 := makeKeyWithPrefix(p)
 			assert.Equal(t, cpl, k.CommonPrefixLength(k2), "cpl %d: generated prefix %016b for key starting %016b", cpl, p, tc)
@@ -50,7 +50,7 @@ func TestGenRandPeerID(t *testing.T) {
 	}
 
 	for _, k := range keys {
-		for cpl := 0; cpl < 15; cpl++ {
+		for cpl := range 15 {
 			id, err := GenRandPeerID(k, cpl)
 			require.NoError(t, err)
 

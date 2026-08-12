@@ -1,6 +1,6 @@
 module github.com/probe-lab/zikade
 
-go 1.20
+go 1.25
 
 require (
 	github.com/benbjohnson/clock v1.3.5
@@ -27,7 +27,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.18.0
 	go.opentelemetry.io/otel/sdk/metric v0.41.0
 	go.opentelemetry.io/otel/trace v1.18.0
-	go.uber.org/zap/exp v0.1.0 // cannot update to v0.2.0 because zapslog requires go1.21
+	go.uber.org/zap/exp v0.1.0 // cannot update until the move to log/slog: zapslog v0.2.0+ implements log/slog.Handler, not x/exp/slog.Handler
 	golang.org/x/exp v0.0.0-20230817173708-d852ddb80c63
 	google.golang.org/protobuf v1.33.0
 )

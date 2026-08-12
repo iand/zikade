@@ -23,7 +23,7 @@ func TestNodeWithCpl(t *testing.T) {
 	testCases := []Key{Key(1), Key(2), Key(4), Key(8), Key(16), Key(32), Key(16), Key(128), Key(33), Key(159), Key(0), Key(255)}
 
 	for _, k := range testCases {
-		for cpl := 0; cpl < 8; cpl++ {
+		for cpl := range 8 {
 			n, err := NodeWithCpl(k, cpl)
 			assert.NoError(t, err)
 			assert.Equal(t, cpl, k.CommonPrefixLength(n.Key()))

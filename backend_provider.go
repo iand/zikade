@@ -344,7 +344,7 @@ func (p *ProvidersBackend) collectGarbage(ctx context.Context) {
 	p.cache.Purge()
 
 	// erase map
-	p.gcSkip.Range(func(key interface{}, value interface{}) bool {
+	p.gcSkip.Range(func(key any, value any) bool {
 		p.gcSkip.Delete(key)
 		return true
 	})

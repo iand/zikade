@@ -43,7 +43,6 @@ func NewRTPeerDiversityFilter(h host.Host, maxPerCpl, maxForTable int) (*TrieRTP
 		func(p peer.ID) int {
 			return kadt.PeerID(h.ID()).Key().CommonPrefixLength(kadt.PeerID(p).Key())
 		})
-
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +81,8 @@ type rtPeerIPGroupFilter struct {
 // newRtPeerIPGroupFilter constructs the `PeerIPGroupFilter` that will be used
 // to configure the diversity filter for the Routing Table.
 func newRtPeerIPGroupFilter(maxPerCpl, maxForTable int,
-	multiaddrsFn func(peer.ID) []ma.Multiaddr) *rtPeerIPGroupFilter {
+	multiaddrsFn func(peer.ID) []ma.Multiaddr,
+) *rtPeerIPGroupFilter {
 	return &rtPeerIPGroupFilter{
 		multiaddrsFn: multiaddrsFn,
 
@@ -92,7 +92,6 @@ func newRtPeerIPGroupFilter(maxPerCpl, maxForTable int,
 		cplIpGroupCount:   make(map[int]map[peerdiversity.PeerIPGroupKey]int),
 		tableIpGroupCount: make(map[peerdiversity.PeerIPGroupKey]int),
 	}
-
 }
 
 // Allow is called by the `peerdiversity.Filter` to check if a peer is allowed
@@ -105,7 +104,6 @@ func (r *rtPeerIPGroupFilter) Allow(g peerdiversity.PeerGroupInfo) bool {
 	cpl := g.Cpl
 
 	if r.tableIpGroupCount[key] >= r.maxForTable {
-
 		return false
 	}
 
