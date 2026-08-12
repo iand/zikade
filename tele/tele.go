@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	motel "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // ctxKey is an unexported type alias for the value of a context key. This is
@@ -24,7 +25,7 @@ const (
 
 // NoopTracer returns a tracer that does not emit traces.
 func NoopTracer() trace.Tracer {
-	return trace.NewNoopTracerProvider().Tracer("")
+	return tracenoop.NewTracerProvider().Tracer("")
 }
 
 // NoopMeter returns a meter provider that does not record or emit metrics.
