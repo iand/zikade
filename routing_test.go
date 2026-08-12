@@ -57,7 +57,8 @@ func makePkKeyValue(t testing.TB) (string, []byte) {
 func makeIPNSKeyValue(t testing.TB, clk clock.Clock, priv crypto.PrivKey, seq uint64, ttl time.Duration) (string, []byte) {
 	t.Helper()
 
-	testPath := path.Path("/ipfs/bafkqac3jobxhgidsn5rww4yk")
+	testPath, err := path.NewPath("/ipfs/bafkqac3jobxhgidsn5rww4yk")
+	require.NoError(t, err)
 
 	rec, err := ipns.NewRecord(priv, testPath, seq, clk.Now().Add(ttl), ttl)
 	require.NoError(t, err)
