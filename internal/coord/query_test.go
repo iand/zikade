@@ -92,15 +92,13 @@ type QueryBehaviourBaseTestSuite struct {
 }
 
 func (ts *QueryBehaviourBaseTestSuite) SetupTest() {
-	clk := clock.NewMock()
-	top, nodes, err := nettest.LinearTopology(4, clk)
+	top, nodes, err := nettest.LinearTopology(4, clock.New())
 	ts.Require().NoError(err)
 
 	ts.top = top
 	ts.nodes = nodes
 
 	ts.cfg = DefaultQueryConfig()
-	ts.cfg.Clock = clk
 }
 
 func (ts *QueryBehaviourBaseTestSuite) TestNotifiesNoProgress() {

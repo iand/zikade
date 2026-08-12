@@ -37,3 +37,18 @@ func CtxShort(t *testing.T) context.Context {
 	t.Cleanup(cancel)
 	return ctx
 }
+
+// CtxBubble returns a Context for tests running inside a [testing/synctest]
+// bubble. The context is cancelled after 10 seconds of the bubble's fake time,
+// which passes no real time but bounds any wait that would otherwise deadlock
+// the bubble.
+//
+// [CtxShort] cannot be used inside a bubble because it calls T.Deadline, which
+// synctest forbids.
+func CtxBubble(t *testing.T) context.Context {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}

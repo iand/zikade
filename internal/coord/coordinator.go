@@ -212,6 +212,10 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 func (c *Coordinator) Close() error {
 	c.cancel()
 	<-c.done
+
+	// the event loop has exited so no further work can be dispatched to the
+	// node handlers, stop them and release their goroutines
+	c.networkBehaviour.Close()
 	return nil
 }
 

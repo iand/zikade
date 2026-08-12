@@ -106,6 +106,18 @@ func (b *NetworkBehaviour) Perform(ctx context.Context) (BehaviourEvent, bool) {
 	return nil, false
 }
 
+// Close stops all the node handlers managed by the behaviour, releasing the
+// goroutines they use to send messages. It is safe to call Close more than once.
+func (b *NetworkBehaviour) Close() {
+	b.nodeHandlersMu.Lock()
+	defer b.nodeHandlersMu.Unlock()
+
+	for _, nh := range b.nodeHandlers {
+		nh.Close()
+	}
+	clear(b.nodeHandlers)
+}
+
 type NodeHandler struct {
 	self   kadt.PeerID
 	rtr    coordt.Router[kadt.Key, kadt.PeerID, *pb.Message]
@@ -183,6 +195,11 @@ func (h *NodeHandler) send(ctx context.Context, ev NodeHandlerRequest) bool {
 	}
 
 	return false
+}
+
+// Close stops the handler from performing any further work.
+func (h *NodeHandler) Close() {
+	h.queue.Close()
 }
 
 func (h *NodeHandler) ID() kadt.PeerID {

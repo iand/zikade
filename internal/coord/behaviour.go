@@ -44,16 +44,19 @@ type WorkQueueFunc[E BehaviourEvent] func(context.Context, E) bool
 // WorkQueueFunc for each work item, passing the original context
 // and event.
 type WorkQueue[E BehaviourEvent] struct {
-	pending chan CtxEvent[E]
-	fn      WorkQueueFunc[E]
-	done    atomic.Bool
-	once    sync.Once
+	pending  chan CtxEvent[E]
+	fn       WorkQueueFunc[E]
+	done     atomic.Bool
+	once     sync.Once
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 func NewWorkQueue[E BehaviourEvent](fn WorkQueueFunc[E]) *WorkQueue[E] {
 	w := &WorkQueue[E]{
 		pending: make(chan CtxEvent[E], 1),
 		fn:      fn,
+		stop:    make(chan struct{}),
 	}
 	return w
 }
@@ -76,13 +79,18 @@ func (w *WorkQueue[E]) Enqueue(ctx context.Context, cmd E) error {
 	w.once.Do(func() {
 		go func() {
 			defer w.done.Store(true)
-			for cc := range w.pending {
-				if cc.Ctx.Err() != nil {
+			for {
+				select {
+				case <-w.stop:
 					return
-				}
-				if done := w.fn(cc.Ctx, cc.Event); done {
-					w.done.Store(true)
-					return
+				case cc := <-w.pending:
+					if cc.Ctx.Err() != nil {
+						return
+					}
+					if done := w.fn(cc.Ctx, cc.Event); done {
+						w.done.Store(true)
+						return
+					}
 				}
 			}
 		}()
@@ -91,6 +99,8 @@ func (w *WorkQueue[E]) Enqueue(ctx context.Context, cmd E) error {
 	select {
 	case <-ctx.Done(): // this is the context for the work item
 		return ctx.Err()
+	case <-w.stop:
+		return nil
 	case w.pending <- CtxEvent[E]{
 		Ctx:   ctx,
 		Event: cmd,
@@ -98,6 +108,16 @@ func (w *WorkQueue[E]) Enqueue(ctx context.Context, cmd E) error {
 		return nil
 
 	}
+}
+
+// Close stops the queue draining goroutine and discards any queued work.
+// Subsequent calls to Enqueue are ignored. It is safe to call Close more
+// than once.
+func (w *WorkQueue[E]) Close() {
+	w.stopOnce.Do(func() {
+		w.done.Store(true)
+		close(w.stop)
+	})
 }
 
 // A Waiter is a Notifiee whose Notify method forwards the
