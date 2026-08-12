@@ -30,17 +30,20 @@ func (d *DHT) FindPeer(ctx context.Context, id peer.ID) (peer.AddrInfo, error) {
 	ctx, span := d.tele.Tracer.Start(ctx, "DHT.FindPeer")
 	defer span.End()
 
-	// First check locally. If we are or were recently connected to the peer,
-	// return the addresses from our peerstore unless the information doesn't
-	// contain any.
+	// First check locally. If we are connected to the peer, return the
+	// addresses from our peerstore unless the information doesn't contain any.
+	//
+	// This used to also match network.CanConnect ("recently connected,
+	// terminated gracefully"), which go-libp2p has deprecated for removal. The
+	// swarm never returns it, so that branch was already unreachable.
 	switch d.host.Network().Connectedness(id) {
-	case network.Connected, network.CanConnect:
+	case network.Connected:
 		addrInfo := d.host.Peerstore().PeerInfo(id)
 		if addrInfo.ID != "" && len(addrInfo.Addrs) > 0 {
 			return addrInfo, nil
 		}
 	default:
-		// we're not connected or were recently connected
+		// we're not connected
 	}
 
 	var foundPeer peer.ID

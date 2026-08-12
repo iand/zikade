@@ -53,9 +53,9 @@ func TestRTEvictionOnFailedQuery(t *testing.T) {
 
 	top.Connect(ctx, d1, d2)
 
-	// close both hosts so query fails
-	require.NoError(t, d1.host.Close())
-	require.NoError(t, d2.host.Close())
+	// isolate both hosts so the query fails
+	top.Isolate(d1)
+	top.Isolate(d2)
 
 	// peers will still be in the RT because time is paused and
 	// no scheduled probes will have taken place

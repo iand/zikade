@@ -6,29 +6,60 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
-	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/probe-lab/zikade/internal/coord"
 	"github.com/probe-lab/zikade/kadt"
 )
 
-// A Topology is an arrangement of DHTs intended to simulate a network
+// A Topology is an arrangement of DHTs intended to simulate a network.
+//
+// Hosts are created on a [mocknet.Mocknet] rather than on real sockets. Besides
+// being faster and leaving no file descriptors behind, this avoids a hang that
+// go-libp2p 0.32 introduced when two hosts dial each other simultaneously over
+// loopback, which is exactly what Connect provokes.
 type Topology struct {
 	clk  clock.Clock
 	tb   testing.TB
+	mn   mocknet.Mocknet
 	dhts map[string]*DHT
 	rns  map[string]*coord.BufferedRoutingNotifier
 }
 
 func NewTopology(tb testing.TB) *Topology {
+	mn := mocknet.New()
+	tb.Cleanup(func() {
+		if err := mn.Close(); err != nil {
+			tb.Logf("unexpected error when closing mocknet: %s", err)
+		}
+	})
+
 	return &Topology{
 		clk:  clock.New(),
 		tb:   tb,
+		mn:   mn,
 		dhts: make(map[string]*DHT),
 		rns:  make(map[string]*coord.BufferedRoutingNotifier),
 	}
+}
+
+// newHost adds a host to the mocknet and links it to every other host already
+// present. Linking is the ability to dial, not a connection: on a real network
+// any host can dial any other, and a query is free to hop to a peer it has only
+// just heard about. Linking everything preserves that, leaving Connect to
+// control routing table contents alone.
+func (t *Topology) newHost() host.Host {
+	t.tb.Helper()
+
+	h, err := t.mn.GenPeer()
+	require.NoError(t.tb, err)
+
+	require.NoError(t.tb, t.mn.LinkAll())
+
+	return h
 }
 
 func (t *Topology) SetClock(clk clock.Clock) {
@@ -40,12 +71,7 @@ func (t *Topology) SetClock(clk clock.Clock) {
 func (t *Topology) AddServer(cfg *Config) *DHT {
 	t.tb.Helper()
 
-	h := newTestHost(t.tb, libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
-	t.tb.Cleanup(func() {
-		if err := h.Close(); err != nil {
-			t.tb.Logf("unexpected error when closing host: %s", err)
-		}
-	})
+	h := t.newHost()
 
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -76,12 +102,7 @@ func (t *Topology) AddServer(cfg *Config) *DHT {
 func (t *Topology) AddClient(cfg *Config) *DHT {
 	t.tb.Helper()
 
-	h := newTestHost(t.tb, libp2p.NoListenAddrs)
-	t.tb.Cleanup(func() {
-		if err := h.Close(); err != nil {
-			t.tb.Logf("unexpected error when closing host: %s", err)
-		}
-	})
+	h := t.newHost()
 
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -154,6 +175,32 @@ func (t *Topology) Connect(ctx context.Context, a *DHT, b *DHT) {
 
 	// the routing table should now contain the node
 	require.True(t.tb, b.kad.IsRoutable(ctx, kadt.PeerID(a.host.ID())))
+}
+
+// Isolate makes d unreachable by every other DHT in the topology, and them
+// unreachable by it, so that any request to or from d fails.
+//
+// Closing the host is not enough on a mocknet: existing connections remain
+// usable afterwards and requests continue to be served. Removing the links is
+// the harness equivalent of pulling the cable. Routing tables are left
+// untouched, so callers can assert on eviction.
+func (t *Topology) Isolate(d *DHT) {
+	t.tb.Helper()
+
+	id := d.host.ID()
+	for _, other := range t.dhts {
+		otherID := other.host.ID()
+		if otherID == id {
+			continue
+		}
+
+		if err := t.mn.DisconnectPeers(id, otherID); err != nil {
+			t.tb.Fatalf("disconnecting %s from %s: %s", id, otherID, err)
+		}
+		if err := t.mn.UnlinkPeers(id, otherID); err != nil {
+			t.tb.Fatalf("unlinking %s from %s: %s", id, otherID, err)
+		}
+	}
 }
 
 // ConnectChain connects the DHTs in a linear chain.
