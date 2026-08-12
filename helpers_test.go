@@ -10,7 +10,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/require"
@@ -24,25 +23,12 @@ var rng = rand.New(rand.NewSource(1337))
 // newTestHost returns a libp2p host with the given options. It also applies
 // options that are common to all test hosts.
 func newTestHost(t testing.TB, opts ...libp2p.Option) host.Host {
-	// If two peers simultaneously connect, they could end up in a state where
-	// one peer is waiting on the connection for the other one, although there
-	// already exists a valid connection. The libp2p dial loop doesn't recognize
-	// the new connection immediately, but only after the local dial has timed
-	// out. By default, the timeout is set to 5s which results in failing tests
-	// as the tests time out. By setting the timeout to a much lower value, we
-	// work around the timeout issue. Try to remove the following swarm options
-	// after https://github.com/libp2p/go-libp2p/issues/2589 was resolved.
-	// Also, the below should be changed to [swarm.WithDialTimeoutLocal]. Change
-	// that after https://github.com/libp2p/go-libp2p/pull/2595 is resolved.
-	dialTimeout := 500 * time.Millisecond
-	swarmOpts := libp2p.SwarmOpts(swarm.WithDialTimeout(dialTimeout))
-
 	// The QUIC transport leaks go-routines, so we're only enabling the TCP
 	// transport for our tests. Remove after:
 	// https://github.com/libp2p/go-libp2p/issues/2514 was fixed
 	tcpTransport := libp2p.Transport(tcp.NewTCPTransport)
 
-	h, err := libp2p.New(append(opts, swarmOpts, tcpTransport)...)
+	h, err := libp2p.New(append(opts, tcpTransport)...)
 	require.NoError(t, err)
 
 	return h

@@ -8,6 +8,8 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/probe-lab/zikade/kadt"
 )
 
@@ -129,7 +131,9 @@ func (m *Message) Size() (n int) {
 		n += 1 + l + sovDht(uint64(l))
 	}
 	if m.Record != nil {
-		l = m.Record.Size()
+		// go-libp2p-record moved from gogo-protobuf to google.golang.org/protobuf,
+		// which does not generate a Size method.
+		l = proto.Size(m.Record)
 		n += 1 + l + sovDht(uint64(l))
 	}
 	if len(m.CloserPeers) > 0 {

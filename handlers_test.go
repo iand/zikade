@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strconv"
 	"sync"
 	"testing"
@@ -467,7 +466,7 @@ func TestDHT_handlePutValue_happy_path_ipns_record(t *testing.T) {
 	r.TimeReceived = ""
 	req.Record.TimeReceived = ""
 
-	assert.True(t, reflect.DeepEqual(r, req.Record))
+	assert.True(t, proto.Equal(r, req.Record))
 }
 
 func TestDHT_handlePutValue_nil_records(t *testing.T) {
@@ -616,7 +615,7 @@ func TestDHT_handlePutValue_overwrites_corrupt_stored_ipns_record(t *testing.T) 
 	require.NoError(t, err)
 
 	r := &recpb.Record{}
-	require.NoError(t, r.Unmarshal(value))
+	require.NoError(t, proto.Unmarshal(value, r))
 
 	_, err = ipns.UnmarshalRecord(r.Value)
 	require.NoError(t, err)
@@ -803,7 +802,7 @@ func BenchmarkDHT_handleGetValue(b *testing.B) {
 
 		putReq := newPutIPNSRequest(b, d.cfg.Clock, priv, 0, time.Hour)
 
-		data, err := putReq.Record.Marshal()
+		data, err := proto.Marshal(putReq.Record)
 		require.NoError(b, err)
 
 		dsKey := newDatastoreKey(namespaceIPNS, string(pid))
@@ -843,7 +842,7 @@ func TestDHT_handleGetValue_happy_path_ipns_record(t *testing.T) {
 	rbe, err := typedBackend[*RecordBackend](d, namespaceIPNS)
 	require.NoError(t, err)
 
-	data, err := putReq.Record.Marshal()
+	data, err := proto.Marshal(putReq.Record)
 	require.NoError(t, err)
 
 	dsKey := newDatastoreKey(namespaceIPNS, string(remote))
@@ -948,7 +947,7 @@ func TestDHT_handleGetValue_ipns_max_age_exceeded_in_datastore(t *testing.T) {
 
 	dsKey := newDatastoreKey(namespaceIPNS, string(remote))
 
-	data, err := putReq.Record.Marshal()
+	data, err := proto.Marshal(putReq.Record)
 	require.NoError(t, err)
 
 	err = rbe.datastore.Put(context.Background(), dsKey, data)
@@ -993,7 +992,7 @@ func TestDHT_handleGetValue_does_not_validate_stored_record(t *testing.T) {
 	// generate expired record (doesn't pass validation)
 	putReq := newPutIPNSRequest(t, d.cfg.Clock, priv, 0, -time.Hour)
 
-	data, err := putReq.Record.Marshal()
+	data, err := proto.Marshal(putReq.Record)
 	require.NoError(t, err)
 
 	dsKey := newDatastoreKey(namespaceIPNS, string(remote))

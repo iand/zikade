@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/probe-lab/zikade/internal/kadtest"
 	"github.com/probe-lab/zikade/kadt"
@@ -697,7 +698,7 @@ func (suite *SearchValueQuorumTestSuite) SetupTest() {
 
 	// store invalid (expired) record directly in the datastore of
 	// the respective DHT server (bypassing any validation).
-	invalidRec, err := invalidPutReq.Record.Marshal()
+	invalidRec, err := proto.Marshal(invalidPutReq.Record)
 	require.NoError(t, err)
 
 	rbe, err := typedBackend[*RecordBackend](suite.servers[0], namespaceIPNS)

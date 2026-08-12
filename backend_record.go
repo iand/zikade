@@ -11,6 +11,7 @@ import (
 	ds "github.com/ipfs/go-datastore"
 	record "github.com/libp2p/go-libp2p-record"
 	recpb "github.com/libp2p/go-libp2p-record/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 type RecordBackend struct {
@@ -71,7 +72,7 @@ func (r *RecordBackend) Store(ctx context.Context, key string, value any) (any, 
 	// avoid storing arbitrary data, so overwrite that field
 	rec.TimeReceived = r.cfg.clk.Now().UTC().Format(time.RFC3339Nano)
 
-	data, err := rec.Marshal()
+	data, err := proto.Marshal(rec)
 	if err != nil {
 		return nil, fmt.Errorf("marshal incoming record: %w", err)
 	}
@@ -98,7 +99,7 @@ func (r *RecordBackend) Fetch(ctx context.Context, key string) (any, error) {
 
 	// we have found a record, parse it and do basic validation
 	rec := &recpb.Record{}
-	err = rec.Unmarshal(buf)
+	err = proto.Unmarshal(buf, rec)
 	if err != nil {
 		// we have a corrupt record in the datastore -> delete it and pretend
 		// that we don't know about it
@@ -200,7 +201,7 @@ func (r *RecordBackend) shouldReplaceExistingRecord(ctx context.Context, txn ds.
 	}
 
 	existingRec := &recpb.Record{}
-	if err := existingRec.Unmarshal(existingBytes); err != nil {
+	if err := proto.Unmarshal(existingBytes, existingRec); err != nil {
 		return true, nil
 	}
 
