@@ -436,14 +436,14 @@ func (r *RoutingBehaviour) Ready() <-chan struct{} {
 	return r.ready
 }
 
-func (r *RoutingBehaviour) Perform(ctx context.Context) (BehaviourEvent, bool) {
+func (r *RoutingBehaviour) Perform(ctx context.Context) (out BehaviourEvent, performed bool) {
 	r.performMu.Lock()
 	defer r.performMu.Unlock()
 
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.Perform")
 	defer span.End()
 
-	defer r.updateReadyStatus()
+	defer func() { r.updateReadyStatus(performed) }()
 
 	// drain queued events first.
 	// drain queued outbound events before starting new work.
@@ -474,8 +474,19 @@ func (r *RoutingBehaviour) nextPendingOutbound() (BehaviourEvent, bool) {
 	return ev, true
 }
 
-func (r *RoutingBehaviour) updateReadyStatus() {
-	if len(r.pendingOutbound) != 0 {
+// updateReadyStatus signals whether the behaviour has further work to do. It is
+// called at the end of every Perform, passing whether that call produced an
+// event.
+//
+// A Perform that produced an event may be able to produce another one straight
+// away: each child state machine dispatches at most one request per advance, so
+// a bootstrap with spare request concurrency and unqueried seeds needs several
+// calls to reach its configured concurrency. The event loop only calls Perform
+// in response to a ready signal, so without re-signalling here the children
+// would sit on those seeds until some external event arrived, holding them to
+// one request in flight regardless of configuration.
+func (r *RoutingBehaviour) updateReadyStatus(performed bool) {
+	if performed || len(r.pendingOutbound) != 0 {
 		select {
 		case r.ready <- struct{}{}:
 		default:

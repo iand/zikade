@@ -29,6 +29,37 @@ func (r *RecordingSM[E, S]) first() E {
 	return r.Received[0]
 }
 
+// maxPerformIterations bounds [PerformWhileReady] so that a behaviour which
+// signals ready without ever running out of work fails the test instead of
+// hanging it.
+const maxPerformIterations = 1000
+
+// PerformWhileReady drives a behaviour the way [Coordinator.eventLoop] drives
+// it: Perform is called only while Ready() is signalled, never speculatively.
+// It returns the events the behaviour emitted, and stops once the behaviour
+// stops signalling that it has work to do.
+func PerformWhileReady[I BehaviourEvent, O BehaviourEvent](t *testing.T, ctx context.Context, b Behaviour[I, O]) []O {
+	t.Helper()
+
+	var evs []O
+	for range maxPerformIterations {
+		select {
+		case <-b.Ready():
+			ev, ok := b.Perform(ctx)
+			if ok {
+				evs = append(evs, ev)
+			}
+		case <-ctx.Done():
+			t.Fatal("context cancelled while performing behaviour work")
+		default:
+			return evs
+		}
+	}
+
+	t.Fatalf("behaviour still ready after %d iterations", maxPerformIterations)
+	return nil
+}
+
 func DrainBehaviour[I BehaviourEvent, O BehaviourEvent](t *testing.T, ctx context.Context, b Behaviour[I, O]) {
 	for {
 		select {

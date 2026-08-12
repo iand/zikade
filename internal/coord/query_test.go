@@ -272,6 +272,53 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryFinished() {
 	kadtest.ReadItem[CtxEvent[*EventQueryFinished]](t, ctx, waiter.Finished())
 }
 
+// TestQueryBehaviourRequestConcurrency asserts that a query with more seeds
+// than its request concurrency dispatches up to that concurrency, rather than
+// one request at a time.
+//
+// The behaviour is driven exactly as [Coordinator.eventLoop] drives it, which
+// is the point: the pool is willing to dispatch three requests, but it only
+// gets the chance if the behaviour keeps signalling that it is ready.
+func TestQueryBehaviourRequestConcurrency(t *testing.T) {
+	ctx := kadtest.CtxShort(t)
+
+	_, nodes, err := nettest.LinearTopology(6, clock.New())
+	require.NoError(t, err)
+
+	cfg := DefaultQueryConfig()
+	cfg.Concurrency = 3
+	cfg.RequestConcurrency = 3
+
+	b, err := NewQueryBehaviour(nodes[0].NodeID, cfg)
+	require.NoError(t, err)
+
+	seeds := []kadt.PeerID{
+		nodes[1].NodeID,
+		nodes[2].NodeID,
+		nodes[3].NodeID,
+		nodes[4].NodeID,
+		nodes[5].NodeID,
+	}
+
+	b.Notify(ctx, &EventStartFindCloserQuery{
+		QueryID:           "test",
+		Target:            nodes[5].NodeID.Key(),
+		KnownClosestNodes: seeds,
+		NumResults:        10,
+	})
+
+	evs := PerformWhileReady(t, ctx, b)
+
+	var requested []kadt.PeerID
+	for _, ev := range evs {
+		if oev, ok := ev.(*EventOutboundGetCloserNodes); ok {
+			requested = append(requested, oev.To)
+		}
+	}
+
+	require.Len(t, requested, cfg.RequestConcurrency, "expected one outbound request per unit of request concurrency, got requests to %v", requested)
+}
+
 func TestQuery_deadlock_regression(t *testing.T) {
 	t.Skip()
 	ctx := kadtest.CtxShort(t)

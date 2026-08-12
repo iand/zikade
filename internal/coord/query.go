@@ -194,14 +194,14 @@ func (p *QueryBehaviour) Ready() <-chan struct{} {
 // Perform executes the next available task from the queue of pending events or advances
 // the query pool. Returns an event containing the result of the work performed and a
 // true value, or nil and a false value if no event was generated.
-func (p *QueryBehaviour) Perform(ctx context.Context) (BehaviourEvent, bool) {
+func (p *QueryBehaviour) Perform(ctx context.Context) (out BehaviourEvent, performed bool) {
 	p.performMu.Lock()
 	defer p.performMu.Unlock()
 
 	ctx, span := p.cfg.Tracer.Start(ctx, "PooledQueryBehaviour.Perform")
 	defer span.End()
 
-	defer p.updateReadyStatus()
+	defer func() { p.updateReadyStatus(performed) }()
 
 	// first send any pending query notifications
 	for _, w := range p.notifiers {
@@ -343,8 +343,19 @@ func (p *QueryBehaviour) perfomNextInbound(ctx context.Context) (BehaviourEvent,
 	return p.advancePool(pev.Ctx, cmd)
 }
 
-func (p *QueryBehaviour) updateReadyStatus() {
-	if len(p.pendingOutbound) != 0 {
+// updateReadyStatus signals whether the behaviour has further work to do. It is
+// called at the end of every Perform, passing whether that call produced an
+// event.
+//
+// A Perform that produced an event may be able to produce another one straight
+// away: the query pool dispatches at most one request per advance, so a query
+// with spare request concurrency and unqueried nodes needs several calls to
+// reach its configured concurrency. The event loop only calls Perform in
+// response to a ready signal, so without re-signalling here the pool would sit
+// on those nodes until some external event arrived, holding every query to one
+// request in flight regardless of configuration.
+func (p *QueryBehaviour) updateReadyStatus(performed bool) {
+	if performed || len(p.pendingOutbound) != 0 {
 		select {
 		case p.ready <- struct{}{}:
 		default:
