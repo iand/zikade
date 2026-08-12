@@ -74,14 +74,14 @@ func (b *PooledBroadcastBehaviour) Notify(ctx context.Context, ev BehaviourEvent
 	}
 }
 
-func (b *PooledBroadcastBehaviour) Perform(ctx context.Context) (BehaviourEvent, bool) {
+func (b *PooledBroadcastBehaviour) Perform(ctx context.Context) (out BehaviourEvent, performed bool) {
 	b.performMu.Lock()
 	defer b.performMu.Unlock()
 
 	ctx, span := b.tracer.Start(ctx, "PooledBroadcastBehaviour.Perform")
 	defer span.End()
 
-	defer b.updateReadyStatus()
+	defer func() { b.updateReadyStatus(performed) }()
 
 	// first send any pending query notifications
 	for _, w := range b.notifiers {
@@ -130,8 +130,18 @@ func (b *PooledBroadcastBehaviour) nextPendingInbound() (CtxEvent[BehaviourEvent
 	return pev, true
 }
 
-func (b *PooledBroadcastBehaviour) updateReadyStatus() {
-	if len(b.pendingOutbound) != 0 {
+// updateReadyStatus signals whether the behaviour has further work to do. It is
+// called at the end of every Perform, passing whether that call produced an
+// event.
+//
+// A Perform that produced an event may be able to produce another one straight
+// away: the broadcast pool dispatches at most one message per advance, so a
+// broadcast with several seed nodes needs several calls to contact them all.
+// The event loop only calls Perform in response to a ready signal, so without
+// re-signalling here a broadcast would contact one node and then wait for that
+// node's response before contacting the next.
+func (b *PooledBroadcastBehaviour) updateReadyStatus(performed bool) {
+	if performed || len(b.pendingOutbound) != 0 {
 		select {
 		case b.ready <- struct{}{}:
 		default:
