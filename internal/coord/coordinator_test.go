@@ -87,6 +87,33 @@ func TestExhaustiveQuery(t *testing.T) {
 	})
 }
 
+// TestQueryReturnsClosestNodes checks that a query which runs to exhaustion hands its
+// caller the closest nodes it found. The notifier closes the progress channel before it
+// sends the terminal event, so a caller selecting on both can be woken by the close and
+// return before the terminal event arrives.
+func TestQueryReturnsClosestNodes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := kadtest.CtxBubble(t)
+
+		_, nodes, err := nettest.LinearTopology(4, clock.New())
+		require.NoError(t, err)
+
+		self := nodes[0].NodeID
+		c, err := NewCoordinator(self, nodes[0].Router, nodes[0].RoutingTable, DefaultCoordinatorConfig())
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, c.Close()) })
+
+		qfn := func(ctx context.Context, id kadt.PeerID, msg *pb.Message, stats coordt.QueryStats) error {
+			return nil
+		}
+
+		closest, stats, err := c.QueryClosest(ctx, nodes[3].NodeID.Key(), qfn, 20)
+		require.NoError(t, err)
+		require.True(t, stats.Exhausted)
+		require.NotEmpty(t, closest)
+	})
+}
+
 func TestRoutingUpdatedEventEmittedForCloserNodes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)

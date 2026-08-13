@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/require"
@@ -317,6 +318,117 @@ func TestQueryBehaviourRequestConcurrency(t *testing.T) {
 	}
 
 	require.Len(t, requested, cfg.RequestConcurrency, "expected one outbound request per unit of request concurrency, got requests to %v", requested)
+}
+
+// TestQueryBehaviourNotifiesQueryTimeout checks that a query which runs out of time tells
+// its waiter so and releases the notifier that was held for it.
+func TestQueryBehaviourNotifiesQueryTimeout(t *testing.T) {
+	ctx := kadtest.CtxShort(t)
+
+	clk := clock.NewMock()
+	_, nodes, err := nettest.LinearTopology(3, clk)
+	require.NoError(t, err)
+
+	cfg := DefaultQueryConfig()
+	cfg.Clock = clk
+	cfg.Timeout = time.Minute
+
+	// one request at a time, so the query has nothing to do but wait for the response
+	// that never arrives
+	cfg.RequestConcurrency = 1
+
+	// the request must outlive the query, otherwise the query ends by running out of
+	// nodes to contact rather than by running out of time
+	cfg.RequestTimeout = time.Hour
+
+	b, err := NewQueryBehaviour(nodes[0].NodeID, cfg)
+	require.NoError(t, err)
+
+	waiter := NewQueryWaiter(5)
+	b.Notify(ctx, &EventStartFindCloserQuery{
+		QueryID:           "test",
+		Target:            nodes[2].NodeID.Key(),
+		KnownClosestNodes: []kadt.PeerID{nodes[1].NodeID},
+		Notify:            waiter,
+		NumResults:        10,
+	})
+
+	bev, ok := b.Perform(ctx)
+	require.True(t, ok)
+	require.IsType(t, &EventOutboundGetCloserNodes{}, bev)
+	require.Len(t, b.notifiers, 1)
+
+	// the node never responds and the query runs out of time
+	clk.Add(2 * cfg.Timeout)
+	_, ok = b.Perform(ctx)
+	require.False(t, ok)
+
+	wev := kadtest.ReadItem[CtxEvent[*EventQueryFinished]](t, ctx, waiter.Finished())
+	require.ErrorIs(t, wev.Event.Err, coordt.ErrQueryTimeout)
+	require.Equal(t, coordt.QueryID("test"), wev.Event.QueryID)
+
+	// the notifier is not retained for a query the pool has forgotten
+	require.Empty(t, b.notifiers)
+}
+
+// TestQueryTimeoutUnblocksWaitForQuery checks that a caller waiting on a query that runs
+// out of time is given a timeout error rather than being left blocked until its own
+// context expires.
+func TestQueryTimeoutUnblocksWaitForQuery(t *testing.T) {
+	ctx := kadtest.CtxShort(t)
+	queryID := coordt.QueryID("test")
+
+	clk := clock.NewMock()
+	_, nodes, err := nettest.LinearTopology(3, clk)
+	require.NoError(t, err)
+
+	cfg := DefaultCoordinatorConfig()
+	cfg.Clock = clk
+	cfg.Query.Clock = clk
+	cfg.Query.Timeout = time.Minute
+	cfg.Query.RequestConcurrency = 1
+
+	// the request must outlive the query, otherwise the query ends by running out of
+	// nodes to contact rather than by running out of time
+	cfg.Query.RequestTimeout = time.Hour
+	cfg.Routing.Clock = clk
+
+	// the coordinator is closed immediately so the test drives the query behaviour
+	// itself rather than racing the event loop
+	c, err := NewCoordinator(nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, cfg)
+	require.NoError(t, err)
+	require.NoError(t, c.Close())
+
+	waiter := NewQueryWaiter(5)
+
+	waiterDone := make(chan struct{})
+	var waitErr error
+	go func() {
+		defer close(waiterDone)
+		_, _, waitErr = c.waitForQuery(ctx, queryID, waiter, func(ctx context.Context, id kadt.PeerID, resp *pb.Message, stats coordt.QueryStats) error {
+			return nil
+		})
+	}()
+
+	c.queryBehaviour.Notify(ctx, &EventStartFindCloserQuery{
+		QueryID:           queryID,
+		Target:            nodes[2].NodeID.Key(),
+		KnownClosestNodes: []kadt.PeerID{nodes[1].NodeID},
+		Notify:            waiter,
+		NumResults:        10,
+	})
+
+	bev, ok := c.queryBehaviour.Perform(ctx)
+	require.True(t, ok)
+	require.IsType(t, &EventOutboundGetCloserNodes{}, bev)
+
+	// the node never responds and the query runs out of time
+	clk.Add(2 * cfg.Query.Timeout)
+	_, ok = c.queryBehaviour.Perform(ctx)
+	require.False(t, ok)
+
+	kadtest.AssertClosed(t, ctx, waiterDone)
+	require.ErrorIs(t, waitErr, coordt.ErrQueryTimeout)
 }
 
 func TestQuery_deadlock_regression(t *testing.T) {

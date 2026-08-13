@@ -190,6 +190,11 @@ type EventQueryFinished struct {
 	QueryID      coordt.QueryID
 	Stats        query.QueryStats
 	ClosestNodes []kadt.PeerID
+
+	// Err records why the query ended when it ended for a reason other than visiting
+	// every node it could, and is nil otherwise. ClosestNodes is not populated when
+	// Err is set.
+	Err error
 }
 
 func (*EventQueryFinished) behaviourEvent()     {}

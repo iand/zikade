@@ -447,14 +447,22 @@ func (c *Coordinator) broadcast(ctx context.Context, msg *pb.Message, seeds []ka
 
 func (c *Coordinator) waitForQuery(ctx context.Context, queryID coordt.QueryID, waiter *QueryWaiter, fn coordt.QueryFunc) ([]kadt.PeerID, coordt.QueryStats, error) {
 	var lastStats coordt.QueryStats
+
+	// progressed is set to nil once the notifier closes the progress channel, which it
+	// does before sending the terminal event. A closed channel is always ready, so
+	// leaving it in the select would win the race against the terminal event and
+	// discard the outcome of the query.
+	progressed := waiter.Progressed()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, lastStats, ctx.Err()
 
-		case wev, more := <-waiter.Progressed():
+		case wev, more := <-progressed:
 			if !more {
-				return nil, lastStats, ctx.Err()
+				progressed = nil
+				continue
 			}
 			ctx, ev := wev.Ctx, wev.Event
 			c.cfg.Logger.Debug("query made progress", "query_id", queryID, tele.LogAttrPeerID(ev.NodeID), slog.Duration("elapsed", c.cfg.Clock.Since(ev.Stats.Start)), slog.Int("requests", ev.Stats.Requests), slog.Int("failures", ev.Stats.Failure))
@@ -493,6 +501,11 @@ func (c *Coordinator) waitForQuery(ctx context.Context, queryID coordt.QueryID, 
 			}
 			if !more {
 				return nil, lastStats, ctx.Err()
+			}
+
+			if wev.Event.Err != nil {
+				c.cfg.Logger.Debug("query ended early", "query_id", queryID, slog.String("reason", wev.Event.Err.Error()), slog.Int("requests", wev.Event.Stats.Requests), slog.Int("failures", wev.Event.Stats.Failure))
+				return nil, lastStats, wev.Event.Err
 			}
 
 			// query is done

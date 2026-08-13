@@ -406,17 +406,17 @@ func (p *QueryBehaviour) advancePool(ctx context.Context, now time.Time, ev quer
 	case *query.StatePoolWaitingWithCapacity:
 		// nothing to do except wait for message response or timeout
 	case *query.StatePoolQueryFinished[kadt.Key, kadt.PeerID]:
-		waiter, ok := p.notifiers[st.QueryID]
-		if ok {
-			waiter.NotifyFinished(ctx, &EventQueryFinished{
-				QueryID:      st.QueryID,
-				Stats:        st.Stats,
-				ClosestNodes: st.ClosestNodes,
-			})
-			delete(p.notifiers, st.QueryID)
-		}
+		p.notifyQueryFinished(ctx, &EventQueryFinished{
+			QueryID:      st.QueryID,
+			Stats:        st.Stats,
+			ClosestNodes: st.ClosestNodes,
+		})
 	case *query.StatePoolQueryTimeout:
-		// TODO
+		p.notifyQueryFinished(ctx, &EventQueryFinished{
+			QueryID: st.QueryID,
+			Stats:   st.Stats,
+			Err:     coordt.ErrQueryTimeout,
+		})
 	case *query.StatePoolIdle:
 		// nothing to do
 	default:
@@ -424,6 +424,19 @@ func (p *QueryBehaviour) advancePool(ctx context.Context, now time.Time, ev quer
 	}
 
 	return nil, false
+}
+
+// notifyQueryFinished tells the query's waiter that the query has ended and releases the
+// notifier held for it. The query pool has already forgotten the query by this point, so
+// failing to release the notifier here would leave the waiter blocked and the map entry in
+// place for the lifetime of the behaviour.
+func (p *QueryBehaviour) notifyQueryFinished(ctx context.Context, ev *EventQueryFinished) {
+	waiter, ok := p.notifiers[ev.QueryID]
+	if !ok {
+		return
+	}
+	waiter.NotifyFinished(ctx, ev)
+	delete(p.notifiers, ev.QueryID)
 }
 
 func (p *QueryBehaviour) queueAddNodeEvents(nodes []kadt.PeerID) {

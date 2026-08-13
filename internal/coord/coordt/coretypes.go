@@ -33,6 +33,10 @@ var (
 	ErrNodeNotFound     = errors.New("node not found")
 	ErrValueNotFound    = errors.New("value not found")
 	ErrValueNotAccepted = errors.New("value not accepted")
+
+	// ErrQueryTimeout is returned when a query ran out of time before it could visit
+	// every node it had to.
+	ErrQueryTimeout = errors.New("query timed out")
 )
 
 // QueryFunc is the type of the function called by Query to visit each node.
