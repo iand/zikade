@@ -145,7 +145,7 @@ func (Message_ConnectionType) EnumDescriptor() ([]byte, []int) {
 type Message struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// defines what type of message it is.
-	Type Message_MessageType `protobuf:"varint,1,opt,name=type,proto3,enum=dht.pb.Message_MessageType" json:"type,omitempty"`
+	Type Message_MessageType `protobuf:"varint,1,opt,name=type,proto3,enum=zikade.dht.pb.Message_MessageType" json:"type,omitempty"`
 	// defines what coral cluster level this query/response belongs to.
 	// in case we want to implement coral's cluster rings in the future.
 	//
@@ -247,7 +247,7 @@ type Message_Peer struct {
 	// multiaddrs for a given peer
 	Addrs [][]byte `protobuf:"bytes,2,rep,name=addrs,proto3" json:"addrs,omitempty"`
 	// used to signal the sender's connection capabilities to the peer
-	Connection    Message_ConnectionType `protobuf:"varint,3,opt,name=connection,proto3,enum=dht.pb.Message_ConnectionType" json:"connection,omitempty"`
+	Connection    Message_ConnectionType `protobuf:"varint,3,opt,name=connection,proto3,enum=zikade.dht.pb.Message_ConnectionType" json:"connection,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -307,20 +307,20 @@ var File_msg_proto protoreflect.FileDescriptor
 
 const file_msg_proto_rawDesc = "" +
 	"\n" +
-	"\tmsg.proto\x12\x06dht.pb\x1a2github.com/libp2p/go-libp2p-record/pb/record.proto\"\xcf\x04\n" +
-	"\aMessage\x12/\n" +
-	"\x04type\x18\x01 \x01(\x0e2\x1b.dht.pb.Message.MessageTypeR\x04type\x12.\n" +
+	"\tmsg.proto\x12\rzikade.dht.pb\x1a2github.com/libp2p/go-libp2p-record/pb/record.proto\"\xeb\x04\n" +
+	"\aMessage\x126\n" +
+	"\x04type\x18\x01 \x01(\x0e2\".zikade.dht.pb.Message.MessageTypeR\x04type\x12.\n" +
 	"\x11cluster_level_raw\x18\n" +
 	" \x01(\x05B\x02\x18\x01R\x0fclusterLevelRaw\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\fR\x03key\x12)\n" +
-	"\x06record\x18\x03 \x01(\v2\x11.record.pb.RecordR\x06record\x127\n" +
-	"\fcloser_peers\x18\b \x03(\v2\x14.dht.pb.Message.PeerR\vcloserPeers\x12;\n" +
-	"\x0eprovider_peers\x18\t \x03(\v2\x14.dht.pb.Message.PeerR\rproviderPeers\x1al\n" +
+	"\x06record\x18\x03 \x01(\v2\x11.record.pb.RecordR\x06record\x12>\n" +
+	"\fcloser_peers\x18\b \x03(\v2\x1b.zikade.dht.pb.Message.PeerR\vcloserPeers\x12B\n" +
+	"\x0eprovider_peers\x18\t \x03(\v2\x1b.zikade.dht.pb.Message.PeerR\rproviderPeers\x1as\n" +
 	"\x04Peer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x14\n" +
-	"\x05addrs\x18\x02 \x03(\fR\x05addrs\x12>\n" +
+	"\x05addrs\x18\x02 \x03(\fR\x05addrs\x12E\n" +
 	"\n" +
-	"connection\x18\x03 \x01(\x0e2\x1e.dht.pb.Message.ConnectionTypeR\n" +
+	"connection\x18\x03 \x01(\x0e2%.zikade.dht.pb.Message.ConnectionTypeR\n" +
 	"connection\"i\n" +
 	"\vMessageType\x12\r\n" +
 	"\tPUT_VALUE\x10\x00\x12\r\n" +
@@ -350,18 +350,18 @@ func file_msg_proto_rawDescGZIP() []byte {
 var file_msg_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_msg_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_msg_proto_goTypes = []any{
-	(Message_MessageType)(0),    // 0: dht.pb.Message.MessageType
-	(Message_ConnectionType)(0), // 1: dht.pb.Message.ConnectionType
-	(*Message)(nil),             // 2: dht.pb.Message
-	(*Message_Peer)(nil),        // 3: dht.pb.Message.Peer
+	(Message_MessageType)(0),    // 0: zikade.dht.pb.Message.MessageType
+	(Message_ConnectionType)(0), // 1: zikade.dht.pb.Message.ConnectionType
+	(*Message)(nil),             // 2: zikade.dht.pb.Message
+	(*Message_Peer)(nil),        // 3: zikade.dht.pb.Message.Peer
 	(*pb.Record)(nil),           // 4: record.pb.Record
 }
 var file_msg_proto_depIdxs = []int32{
-	0, // 0: dht.pb.Message.type:type_name -> dht.pb.Message.MessageType
-	4, // 1: dht.pb.Message.record:type_name -> record.pb.Record
-	3, // 2: dht.pb.Message.closer_peers:type_name -> dht.pb.Message.Peer
-	3, // 3: dht.pb.Message.provider_peers:type_name -> dht.pb.Message.Peer
-	1, // 4: dht.pb.Message.Peer.connection:type_name -> dht.pb.Message.ConnectionType
+	0, // 0: zikade.dht.pb.Message.type:type_name -> zikade.dht.pb.Message.MessageType
+	4, // 1: zikade.dht.pb.Message.record:type_name -> record.pb.Record
+	3, // 2: zikade.dht.pb.Message.closer_peers:type_name -> zikade.dht.pb.Message.Peer
+	3, // 3: zikade.dht.pb.Message.provider_peers:type_name -> zikade.dht.pb.Message.Peer
+	1, // 4: zikade.dht.pb.Message.Peer.connection:type_name -> zikade.dht.pb.Message.ConnectionType
 	5, // [5:5] is the sub-list for method output_type
 	5, // [5:5] is the sub-list for method input_type
 	5, // [5:5] is the sub-list for extension type_name

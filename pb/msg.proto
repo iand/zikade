@@ -1,5 +1,6 @@
 syntax = "proto3";
-package dht.pb;
+
+package zikade.dht.pb;
 
 option go_package = "./;pb";
 
