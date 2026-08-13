@@ -319,3 +319,33 @@ func TestIncludeConnectivityCheckTimeout(t *testing.T) {
 		require.False(t, found)
 	}
 }
+
+func TestIncludeReportsNextDue(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+	cfg := DefaultIncludeConfig()
+	cfg.Concurrency = 2
+
+	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
+	require.NoError(t, err)
+
+	p, err := NewInclude[tiny.Key, tiny.Node](rt, cfg)
+	require.NoError(t, err)
+
+	// nothing in flight, so nothing is due
+	state := p.Advance(ctx, now, &EventIncludePoll{})
+	require.IsType(t, &StateIncludeIdle{}, state)
+
+	// start a check, then a second one a minute later
+	state = p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{NodeID: tiny.NewNode(4)})
+	require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
+
+	later := now.Add(time.Minute)
+	state = p.Advance(ctx, later, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{NodeID: tiny.NewNode(8)})
+	require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
+
+	// the earlier of the two check deadlines is what is reported
+	state = p.Advance(ctx, later, &EventIncludePoll{})
+	require.IsType(t, &StateIncludeWaitingAtCapacity{}, state)
+	require.Equal(t, now.Add(cfg.Timeout), state.(*StateIncludeWaitingAtCapacity).NextDue)
+}

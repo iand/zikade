@@ -121,6 +121,8 @@ func (f *Static[K, N, M]) Advance(ctx context.Context, now time.Time, ev Broadca
 	}
 
 	if len(f.waiting) > 0 {
+		// a store record request carries no deadline, so there is no time at which
+		// advancing this state machine would make progress on its own
 		return &StateBroadcastWaiting{}
 	}
 

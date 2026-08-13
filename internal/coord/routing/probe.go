@@ -291,7 +291,7 @@ func (p *Probe[K, N]) Advance(ctx context.Context, now time.Time, ev ProbeEvent)
 		candidate, found := p.nvl.FindCheckPastDeadline(now)
 		if !found {
 			// nothing suitable for time out
-			return &StateProbeWaitingAtCapacity{}
+			return &StateProbeWaitingAtCapacity{NextDue: p.nvl.nextDue()}
 		}
 
 		// mark the node as failed since it timed out
@@ -308,10 +308,10 @@ func (p *Probe[K, N]) Advance(ctx context.Context, now time.Time, ev ProbeEvent)
 	if !ok {
 		if p.nvl.ongoingCount() > 0 {
 			// waiting for a check but nothing else to do
-			return &StateProbeWaitingWithCapacity{}
+			return &StateProbeWaitingWithCapacity{NextDue: p.nvl.nextDue()}
 		}
 		// nothing happening and nothing to do
-		return &StateProbeIdle{}
+		return &StateProbeIdle{NextDue: p.nvl.nextDue()}
 	}
 
 	p.nvl.MarkOngoing(next.NodeID, now.Add(p.cfg.Timeout))
@@ -335,15 +335,21 @@ type StateProbeConnectivityCheck[K kad.Key[K], N kad.NodeID[K]] struct {
 }
 
 // StateProbeIdle indicates that the probe state machine is not running any checks.
-type StateProbeIdle struct{}
+type StateProbeIdle struct {
+	NextDue time.Time // the earliest time advancing the probe could make progress, zero if there is none
+}
 
 // StateProbeWaitingAtCapacity indicates that the probe state machine is waiting for responses for checks and
 // the maximum number of concurrent checks has been reached.
-type StateProbeWaitingAtCapacity struct{}
+type StateProbeWaitingAtCapacity struct {
+	NextDue time.Time // the earliest time advancing the probe could make progress, zero if there is none
+}
 
 // StateProbeWaitingWithCapacity indicates that the probe state machine is waiting for responses for checks
 // but has capacity to perform more.
-type StateProbeWaitingWithCapacity struct{}
+type StateProbeWaitingWithCapacity struct {
+	NextDue time.Time // the earliest time advancing the probe could make progress, zero if there is none
+}
 
 // StateProbeNodeFailure indicates a node has failed a connectivity check been removed from the routing table and the probe list
 type StateProbeNodeFailure[K kad.Key[K], N kad.NodeID[K]] struct {
@@ -527,8 +533,28 @@ func (l *nodeValueList[K, N]) removeFromOngoing(n N) {
 	}
 }
 
-// PeekNext returns the next node that is due a connectivity check without removing it
-// from the pending list.
+// nextDue returns the earliest time at which advancing the probe could make
+// progress without a response arriving, or the zero time if there is no such time.
+// That is the earlier of the next scheduled check and the deadline of the ongoing
+// check that expires soonest, since an expired check is failed and frees capacity.
+func (l *nodeValueList[K, N]) nextDue() time.Time {
+	var earliest time.Time
+	if len(*l.pending) > 0 {
+		earliest = (*l.pending)[0].nv.NextCheckDue
+	}
+
+	// ongoing is only loosely ordered, so every entry has to be considered
+	for _, n := range l.ongoing {
+		nve, ok := l.nodes[key.HexString(n.Key())]
+		if !ok {
+			continue
+		}
+		earliest = earlier(earliest, nve.nv.CheckDeadline)
+	}
+
+	return earliest
+}
+
 func (l *nodeValueList[K, N]) PeekNext(ts time.Time) (*nodeValue[K, N], bool) {
 	if len(*l.pending) == 0 {
 		return nil, false

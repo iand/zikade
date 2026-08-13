@@ -403,3 +403,51 @@ func TestBootstrapTimeout(t *testing.T) {
 	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 	require.IsType(t, &StateBootstrapTimeout{}, state)
 }
+
+func TestBootstrapReportsNextDue(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+	cfg := DefaultBootstrapConfig()
+	cfg.Timeout = 3 * time.Minute
+	cfg.RequestTimeout = time.Minute
+
+	self := tiny.NewNode(0)
+	bs, err := NewBootstrap[tiny.Key](self, cfg)
+	require.NoError(t, err)
+
+	// nothing running, nothing due
+	state := bs.Advance(ctx, now, &EventBootstrapPoll{})
+	require.IsType(t, &StateBootstrapIdle{}, state)
+
+	state = bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
+		KnownClosestNodes: []tiny.Node{tiny.NewNode(0b00000100)},
+	})
+	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	// the request deadline falls before the bootstrap deadline, so it is reported
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
+	require.IsType(t, &StateBootstrapWaiting{}, state)
+	require.Equal(t, now.Add(cfg.RequestTimeout), state.(*StateBootstrapWaiting).NextDue)
+}
+
+func TestBootstrapReportsOwnDeadlineWhenSooner(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+	cfg := DefaultBootstrapConfig()
+	cfg.Timeout = time.Minute
+	cfg.RequestTimeout = time.Hour
+
+	self := tiny.NewNode(0)
+	bs, err := NewBootstrap[tiny.Key](self, cfg)
+	require.NoError(t, err)
+
+	state := bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
+		KnownClosestNodes: []tiny.Node{tiny.NewNode(0b00000100)},
+	})
+	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	// the bootstrap gives up before the request does, so its own deadline wins
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
+	require.IsType(t, &StateBootstrapWaiting{}, state)
+	require.Equal(t, now.Add(cfg.Timeout), state.(*StateBootstrapWaiting).NextDue)
+}

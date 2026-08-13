@@ -83,6 +83,11 @@ type ExploreSchedule interface {
 	// The due time of the cpl should be updated by its designated interval so that its next due time is increased.
 	// If no cpl is due at the given time NextCpl should return -1, false
 	NextCpl(ts time.Time) (int, bool)
+
+	// NextDue returns the time at which the next cpl falls due, or the zero time if
+	// none is scheduled. It is only consulted after NextCpl has reported that nothing
+	// is due yet, so a schedule that is always due need not return a meaningful value.
+	NextDue() time.Time
 }
 
 // ExploreConfig specifies optional configuration for an [Explore]
@@ -251,7 +256,7 @@ func (e *Explore[K, N]) Advance(ctx context.Context, now time.Time, ev ExploreEv
 	// is an explore due yet?
 	cpl, ok := e.schedule.NextCpl(now)
 	if !ok {
-		return &StateExploreIdle{}
+		return &StateExploreIdle{NextDue: e.schedule.NextDue()}
 	}
 
 	// start an explore query by synthesizing a node whose key has the appropriate cpl
@@ -319,8 +324,9 @@ func (e *Explore[K, N]) advanceQuery(ctx context.Context, now time.Time, qev que
 		}
 		span.SetAttributes(attribute.String("out_state", "StateExploreWaiting"))
 		return &StateExploreWaiting{
-			Cpl:   e.qryCpl,
-			Stats: st.Stats,
+			Cpl:     e.qryCpl,
+			Stats:   st.Stats,
+			NextDue: earlier(st.NextDue, st.Deadline),
 		}
 	case *query.StateQueryWaitingWithCapacity:
 		if now.After(st.Deadline) {
@@ -334,8 +340,9 @@ func (e *Explore[K, N]) advanceQuery(ctx context.Context, now time.Time, qev que
 		}
 		span.SetAttributes(attribute.String("out_state", "StateExploreWaiting"))
 		return &StateExploreWaiting{
-			Cpl:   e.qryCpl,
-			Stats: st.Stats,
+			Cpl:     e.qryCpl,
+			Stats:   st.Stats,
+			NextDue: earlier(st.NextDue, st.Deadline),
 		}
 	default:
 		panic(fmt.Sprintf("unexpected state: %T", st))
@@ -354,7 +361,9 @@ type ExploreState interface {
 }
 
 // StateExploreIdle indicates that the explore is not running its query.
-type StateExploreIdle struct{}
+type StateExploreIdle struct {
+	NextDue time.Time // the time the next explore falls due, zero if none is scheduled
+}
 
 // StateExploreFindCloser indicates that the explore query wants to send a find closer nodes message to a node.
 type StateExploreFindCloser[K kad.Key[K], N kad.NodeID[K]] struct {
@@ -367,8 +376,9 @@ type StateExploreFindCloser[K kad.Key[K], N kad.NodeID[K]] struct {
 
 // StateExploreWaiting indicates that the explore query is waiting for a response.
 type StateExploreWaiting struct {
-	Cpl   int // the cpl being explored
-	Stats query.QueryStats
+	NextDue time.Time // the earliest time advancing the explore could make progress, zero if there is none
+	Cpl     int       // the cpl being explored
+	Stats   query.QueryStats
 }
 
 // StateExploreQueryFinished indicates that an explore query has finished.
@@ -553,6 +563,14 @@ func NewDynamicExploreSchedule(maxCpl int, start time.Time, interval time.Durati
 	return s, nil
 }
 
+// NextDue returns the due time of the cpl at the head of the schedule.
+func (s *DynamicExploreSchedule) NextDue() time.Time {
+	if len(*s.cpls) == 0 {
+		return time.Time{}
+	}
+	return (*s.cpls)[0].Due
+}
+
 func (s *DynamicExploreSchedule) NextCpl(ts time.Time) (int, bool) {
 	// is an explore due yet?
 	next := (*s.cpls)[0]
@@ -584,6 +602,12 @@ func NewNoWaitExploreSchedule(maxCpl int) *NoWaitExploreSchedule {
 		maxCpl:  maxCpl,
 		nextCpl: maxCpl,
 	}
+}
+
+// NextDue returns the zero time. A cpl is always due from this schedule, so NextCpl
+// never reports that nothing is due and this value is never consulted.
+func (n *NoWaitExploreSchedule) NextDue() time.Time {
+	return time.Time{}
 }
 
 func (n *NoWaitExploreSchedule) NextCpl(ts time.Time) (int, bool) {

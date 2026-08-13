@@ -124,6 +124,8 @@ func (f *FollowUp[K, N, M]) Advance(ctx context.Context, now time.Time, ev Broad
 	}
 
 	if len(f.waiting) > 0 {
+		// a store record request carries no deadline, so there is no time at which
+		// advancing this state machine would make progress on its own
 		return &StateBroadcastWaiting{}
 	}
 
@@ -216,10 +218,12 @@ func (f *FollowUp[K, N, M]) advancePool(ctx context.Context, now time.Time, ev q
 	case *query.StatePoolWaitingAtCapacity:
 		return &StateBroadcastWaiting{
 			QueryID: f.queryID,
+			NextDue: st.NextDue,
 		}, true
 	case *query.StatePoolWaitingWithCapacity:
 		return &StateBroadcastWaiting{
 			QueryID: f.queryID,
+			NextDue: st.NextDue,
 		}, true
 	case *query.StatePoolQueryFinished[K, N]:
 		if len(st.ClosestNodes) == 0 {

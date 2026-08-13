@@ -417,6 +417,54 @@ func TestPoolState_interface_conformance(t *testing.T) {
 	}
 }
 
+// TestPoolReportsNextDue checks that the broadcast pool reports the due time of the query
+// pool it delegates to while finding closer nodes, and reports nothing scheduled once it
+// moves on to storing records, which carry no deadline.
+func TestPoolReportsNextDue(t *testing.T) {
+	ctx := context.Background()
+	cfg := DefaultConfigPool()
+
+	self := tiny.NewNode(0)
+
+	p, err := NewPool[tiny.Key, tiny.Node, tiny.Message](self, cfg)
+	require.NoError(t, err)
+
+	msg := tiny.Message{Content: "store this"}
+	target := tiny.Key(0b00000001)
+	a := tiny.NewNode(0b00000100) // 4
+
+	queryID := coordt.QueryID("test")
+
+	state := p.Advance(ctx, epoch, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
+		QueryID: queryID,
+		Target:  target,
+		Message: msg,
+		Seed:    []tiny.Node{a},
+		Config:  DefaultConfigFollowUp(),
+	})
+	require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	// while finding closer nodes the pool reports the deadline of the outstanding request
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
+	require.IsType(t, &StatePoolWaiting{}, state)
+	require.Equal(t, epoch.Add(cfg.pCfg.RequestTimeout), state.(*StatePoolWaiting).NextDue)
+
+	// the node responds with no closer node, ending the query and starting the
+	// follow-up phase
+	state = p.Advance(ctx, epoch, &EventPoolGetCloserNodesSuccess[tiny.Key, tiny.Node]{
+		QueryID:     queryID,
+		Target:      target,
+		NodeID:      a,
+		CloserNodes: []tiny.Node{a},
+	})
+	require.IsType(t, &StatePoolStoreRecord[tiny.Key, tiny.Node, tiny.Message]{}, state)
+
+	// a store record request carries no deadline, so there is nothing scheduled
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
+	require.IsType(t, &StatePoolWaiting{}, state)
+	require.True(t, state.(*StatePoolWaiting).NextDue.IsZero())
+}
+
 func TestPoolEvent_interface_conformance(t *testing.T) {
 	events := []PoolEvent{
 		&EventPoolStopBroadcast{},

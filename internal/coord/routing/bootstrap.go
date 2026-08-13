@@ -260,7 +260,8 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, now time.Time, qev q
 		}
 		span.SetAttributes(attribute.String("out_state", "StateBootstrapWaiting"))
 		return &StateBootstrapWaiting{
-			Stats: st.Stats,
+			Stats:   st.Stats,
+			NextDue: earlier(st.NextDue, st.Deadline),
 		}
 	case *query.StateQueryWaitingWithCapacity:
 		if now.After(st.Deadline) {
@@ -272,7 +273,8 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, now time.Time, qev q
 		}
 		span.SetAttributes(attribute.String("out_state", "StateBootstrapWaiting"))
 		return &StateBootstrapWaiting{
-			Stats: st.Stats,
+			Stats:   st.Stats,
+			NextDue: earlier(st.NextDue, st.Deadline),
 		}
 	default:
 		panic(fmt.Sprintf("unexpected state: %T", st))
@@ -307,7 +309,8 @@ type StateBootstrapTimeout struct {
 
 // StateBootstrapWaiting indicates that the bootstrap query is waiting for a response.
 type StateBootstrapWaiting struct {
-	Stats query.QueryStats
+	NextDue time.Time // the earliest time advancing the bootstrap could make progress, zero if there is none
+	Stats   query.QueryStats
 }
 
 // bootstrapState() ensures that only Bootstrap states can be assigned to a BootstrapState.

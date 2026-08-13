@@ -1,6 +1,8 @@
 package brdcst
 
 import (
+	"time"
+
 	"github.com/ipfs/go-libdht/kad"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
@@ -37,6 +39,7 @@ type StateBroadcastStoreRecord[K kad.Key[K], N kad.NodeID[K], M coordt.Message] 
 // for network I/O to finish. It means the state machine isn't idle, but that
 // there are operations in-flight that it is waiting on to finish.
 type StateBroadcastWaiting struct {
+	NextDue time.Time      // the earliest time advancing the broadcast could make progress, zero if there is none
 	QueryID coordt.QueryID // the id of the broadcast operation that is waiting
 }
 

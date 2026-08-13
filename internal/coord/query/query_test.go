@@ -1290,3 +1290,147 @@ func TestFindCloserQueryIncludesPartialClosestNodesWhenCancelled(t *testing.T) {
 // epoch is the base instant for tests. State machines take the current time as a
 // parameter, so tests move time by passing a later instant rather than by advancing a clock.
 var epoch = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+func TestQueryReportsNextDue(t *testing.T) {
+	ctx := context.Background()
+
+	target := tiny.Key(0b00000001)
+	a := tiny.NewNode(0b00000100) // 4
+	b := tiny.NewNode(0b00001000) // 8
+
+	now := epoch
+
+	iter := NewClosestNodesIter[tiny.Key, tiny.Node](target)
+
+	cfg := DefaultQueryConfig()
+	cfg.Concurrency = 1
+
+	self := tiny.NewNode(0)
+	qry, err := NewFindCloserQuery[tiny.Key, tiny.Node, tiny.Message](self, coordt.QueryID("test"), target, iter, []tiny.Node{a, b}, cfg)
+	require.NoError(t, err)
+
+	// contacting the first node sets its request deadline
+	state := qry.Advance(ctx, now, &EventQueryPoll{})
+	require.IsType(t, &StateQueryFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	// at capacity, so the next thing that can happen without a response is that
+	// request timing out
+	state = qry.Advance(ctx, now, &EventQueryPoll{})
+	require.IsType(t, &StateQueryWaitingAtCapacity{}, state)
+	stac := state.(*StateQueryWaitingAtCapacity)
+	require.Equal(t, now.Add(cfg.RequestTimeout), stac.NextDue)
+
+	// a response frees capacity and the second node is contacted a minute later,
+	// so the reported time follows the request that is still outstanding
+	later := now.Add(time.Minute)
+	state = qry.Advance(ctx, later, &EventQueryNodeResponse[tiny.Key, tiny.Node]{NodeID: a})
+	require.IsType(t, &StateQueryFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	state = qry.Advance(ctx, later, &EventQueryPoll{})
+	require.IsType(t, &StateQueryWaitingAtCapacity{}, state)
+	stac = state.(*StateQueryWaitingAtCapacity)
+	require.Equal(t, later.Add(cfg.RequestTimeout), stac.NextDue)
+}
+
+func TestQueryReportsEarliestNodeDeadline(t *testing.T) {
+	ctx := context.Background()
+
+	target := tiny.Key(0b00000001)
+	a := tiny.NewNode(0b00000100) // 4
+	b := tiny.NewNode(0b00001000) // 8
+
+	now := epoch
+
+	iter := NewClosestNodesIter[tiny.Key, tiny.Node](target)
+
+	cfg := DefaultQueryConfig()
+	cfg.Concurrency = 2
+
+	self := tiny.NewNode(0)
+	qry, err := NewFindCloserQuery[tiny.Key, tiny.Node, tiny.Message](self, coordt.QueryID("test"), target, iter, []tiny.Node{a, b}, cfg)
+	require.NoError(t, err)
+
+	// contact the first node, then the second a minute later, so the two have
+	// different request deadlines
+	state := qry.Advance(ctx, now, &EventQueryPoll{})
+	require.IsType(t, &StateQueryFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	later := now.Add(time.Minute)
+	state = qry.Advance(ctx, later, &EventQueryPoll{})
+	require.IsType(t, &StateQueryFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	// the reported time is the earlier of the two, not the most recent
+	state = qry.Advance(ctx, later, &EventQueryPoll{})
+	require.IsType(t, &StateQueryWaitingAtCapacity{}, state)
+	stac := state.(*StateQueryWaitingAtCapacity)
+	require.Equal(t, now.Add(cfg.RequestTimeout), stac.NextDue)
+}
+
+func TestQueryReportsNoNextDueWhenNothingOutstanding(t *testing.T) {
+	ctx := context.Background()
+
+	target := tiny.Key(0b00000011)
+
+	iter := NewClosestNodesIter[tiny.Key, tiny.Node](target)
+
+	cfg := DefaultQueryConfig()
+
+	self := tiny.NewNode(0)
+	qry, err := NewFindCloserQuery[tiny.Key, tiny.Node, tiny.Message](self, coordt.QueryID("test"), target, iter, []tiny.Node{}, cfg)
+	require.NoError(t, err)
+
+	// a query with no nodes to contact finishes rather than waiting, so it never
+	// reports a due time
+	state := qry.Advance(ctx, epoch, &EventQueryPoll{})
+	require.IsType(t, &StateQueryFinished[tiny.Key, tiny.Node]{}, state)
+	require.True(t, qry.nextDue.IsZero())
+}
+
+// TestQueryReportsNextDueAcrossIterationOrder checks that the reported time is the
+// earliest request deadline rather than the deadline of the first node the query
+// walks past. A node learned from a response sorts by its distance to the target,
+// so it can sit ahead of a node that was contacted earlier and expires sooner.
+func TestQueryReportsNextDueAcrossIterationOrder(t *testing.T) {
+	ctx := context.Background()
+
+	target := tiny.Key(0b00000001)
+	near := tiny.NewNode(0b00000010) // 2, xor 3
+	mid := tiny.NewNode(0b00010000)  // 16, xor 17
+	far := tiny.NewNode(0b10000000)  // 128, xor 129
+
+	now := epoch
+
+	iter := NewClosestNodesIter[tiny.Key, tiny.Node](target)
+
+	cfg := DefaultQueryConfig()
+	cfg.Concurrency = 2
+
+	self := tiny.NewNode(0)
+	qry, err := NewFindCloserQuery[tiny.Key, tiny.Node, tiny.Message](self, coordt.QueryID("test"), target, iter, []tiny.Node{mid, far}, cfg)
+	require.NoError(t, err)
+
+	// contact both seeds, so each carries a deadline of now + RequestTimeout
+	state := qry.Advance(ctx, now, &EventQueryPoll{})
+	require.IsType(t, &StateQueryFindCloser[tiny.Key, tiny.Node]{}, state)
+	require.Equal(t, mid, state.(*StateQueryFindCloser[tiny.Key, tiny.Node]).NodeID)
+
+	state = qry.Advance(ctx, now, &EventQueryPoll{})
+	require.IsType(t, &StateQueryFindCloser[tiny.Key, tiny.Node]{}, state)
+	require.Equal(t, far, state.(*StateQueryFindCloser[tiny.Key, tiny.Node]).NodeID)
+
+	// a minute later the far node answers with a closer one, which is contacted
+	// straight away and so carries a later deadline than the mid node
+	later := now.Add(time.Minute)
+	state = qry.Advance(ctx, later, &EventQueryNodeResponse[tiny.Key, tiny.Node]{
+		NodeID:      far,
+		CloserNodes: []tiny.Node{near},
+	})
+	require.IsType(t, &StateQueryFindCloser[tiny.Key, tiny.Node]{}, state)
+	require.Equal(t, near, state.(*StateQueryFindCloser[tiny.Key, tiny.Node]).NodeID)
+
+	// the query now walks near before mid, but mid is the one that expires first
+	state = qry.Advance(ctx, later, &EventQueryPoll{})
+	require.IsType(t, &StateQueryWaitingAtCapacity{}, state)
+	stac := state.(*StateQueryWaitingAtCapacity)
+	require.Equal(t, now.Add(cfg.RequestTimeout), stac.NextDue)
+}

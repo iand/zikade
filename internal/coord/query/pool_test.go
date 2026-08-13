@@ -416,3 +416,71 @@ func TestPoolQueryTimeout(t *testing.T) {
 		})
 	}
 }
+
+// TestPoolReportsNextDue checks that the query pool reports the earliest instant at which
+// advancing it could make progress, taken across the queries it holds.
+func TestPoolReportsNextDue(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+	cfg := DefaultPoolConfig()
+	cfg.Concurrency = 2
+	cfg.QueryConcurrency = 1
+	cfg.Timeout = 5 * time.Minute
+	cfg.RequestTimeout = time.Minute
+
+	self := tiny.NewNode(0)
+	p, err := NewPool[tiny.Key, tiny.Node, tiny.Message](self, cfg)
+	require.NoError(t, err)
+
+	target := tiny.Key(0b00000001)
+	a := tiny.NewNode(0b00000100) // 4
+	b := tiny.NewNode(0b00000011) // 3
+	c := tiny.NewNode(0b00000101) // 5, closer to the target than a
+
+	// a pool holding no queries has nothing scheduled
+	state := p.Advance(ctx, now, &EventPoolPoll{})
+	require.IsType(t, &StatePoolIdle{}, state)
+	require.True(t, state.(*StatePoolIdle).NextDue.IsZero())
+
+	// the first query dispatches a request whose deadline falls before the query's own
+	state = p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+		QueryID: coordt.QueryID("first"),
+		Target:  target,
+		Seed:    []tiny.Node{a},
+	})
+	require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	state = p.Advance(ctx, now, &EventPoolPoll{})
+	require.IsType(t, &StatePoolWaitingWithCapacity{}, state)
+	require.Equal(t, epoch.Add(cfg.RequestTimeout), state.(*StatePoolWaitingWithCapacity).NextDue)
+
+	// a second query started later has a later request deadline, so the pool still
+	// reports the first query's
+	now = epoch.Add(30 * time.Second)
+	state = p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+		QueryID: coordt.QueryID("second"),
+		Target:  target,
+		Seed:    []tiny.Node{b},
+	})
+	require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	state = p.Advance(ctx, now, &EventPoolPoll{})
+	require.IsType(t, &StatePoolWaitingAtCapacity{}, state)
+	require.Equal(t, epoch.Add(cfg.RequestTimeout), state.(*StatePoolWaitingAtCapacity).NextDue)
+
+	// answering the first query's request replaces it with a request to the closer node
+	// it learned about, dated from now
+	now = epoch.Add(45 * time.Second)
+	state = p.Advance(ctx, now, &EventPoolNodeResponse[tiny.Key, tiny.Node]{
+		QueryID:     coordt.QueryID("first"),
+		NodeID:      a,
+		CloserNodes: []tiny.Node{c},
+	})
+	require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	// the replacement request expires after the second query's, so the pool now reports
+	// the second query's deadline
+	state = p.Advance(ctx, now, &EventPoolPoll{})
+	require.IsType(t, &StatePoolWaitingAtCapacity{}, state)
+	require.Equal(t, epoch.Add(30*time.Second).Add(cfg.RequestTimeout), state.(*StatePoolWaitingAtCapacity).NextDue)
+}

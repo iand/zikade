@@ -444,3 +444,32 @@ func TestExploreQueryTimeout(t *testing.T) {
 	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreQueryTimeout{}, state)
 }
+
+func TestExploreReportsNextDue(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+	cfg := DefaultExploreConfig()
+
+	self := tiny.NewNode(128)
+	rt, err := triert.New[tiny.Key, tiny.Node](self, nil)
+	require.NoError(t, err)
+	rt.AddNode(tiny.NewNode(4))
+
+	schedule := DefaultDynamicSchedule(t, now)
+	ex, err := NewExplore[tiny.Key, tiny.Node](self, rt, tiny.NodeWithCpl, schedule, cfg)
+	require.NoError(t, err)
+
+	// while idle the reported time is when the next cpl falls due
+	state := ex.Advance(ctx, now, &EventExplorePoll{})
+	require.IsType(t, &StateExploreIdle{}, state)
+	require.Equal(t, now.Add(schedule.cplInterval(schedule.maxCpl)), state.(*StateExploreIdle).NextDue)
+
+	// once a query is running the reported time follows its request deadline
+	due := now.Add(schedule.cplInterval(schedule.maxCpl))
+	state = ex.Advance(ctx, due, &EventExplorePoll{})
+	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	state = ex.Advance(ctx, due, &EventExplorePoll{})
+	require.IsType(t, &StateExploreWaiting{}, state)
+	require.Equal(t, due.Add(cfg.RequestTimeout), state.(*StateExploreWaiting).NextDue)
+}

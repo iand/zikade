@@ -189,7 +189,7 @@ func (p *Pool[K, N, M]) advanceBroadcast(ctx context.Context, now time.Time, sm 
 			Target:  st.Target,
 		}, true
 	case *StateBroadcastWaiting:
-		return &StatePoolWaiting{}, true
+		return &StatePoolWaiting{NextDue: st.NextDue}, true
 	case *StateBroadcastStoreRecord[K, N, M]:
 		return &StatePoolStoreRecord[K, N, M]{
 			QueryID: st.QueryID,
@@ -227,7 +227,9 @@ type StatePoolFindCloser[K kad.Key[K], N kad.NodeID[K]] struct {
 // StatePoolWaiting indicates that the broadcast [Pool] is waiting for network
 // I/O to finish. It means the [Pool] isn't idle, but there are operations
 // in-flight that it is waiting on to finish.
-type StatePoolWaiting struct{}
+type StatePoolWaiting struct {
+	NextDue time.Time // the earliest time advancing the pool could make progress, zero if there is none
+}
 
 // StatePoolStoreRecord indicates to the upper layer that the broadcast [Pool]
 // wants to store a record using the given Message with the given NodeID. The

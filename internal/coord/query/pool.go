@@ -171,15 +171,38 @@ func (p *Pool[K, N, M]) Advance(ctx context.Context, now time.Time, ev PoolEvent
 
 		// check if we have the maximum number of queries in flight
 		if p.queriesInFlight >= p.cfg.Concurrency {
-			return &StatePoolWaitingAtCapacity{}
+			return &StatePoolWaitingAtCapacity{NextDue: p.nextDue()}
 		}
 	}
 
 	if p.queriesInFlight > 0 {
-		return &StatePoolWaitingWithCapacity{}
+		return &StatePoolWaitingWithCapacity{NextDue: p.nextDue()}
 	}
 
-	return &StatePoolIdle{}
+	return &StatePoolIdle{NextDue: p.nextDue()}
+}
+
+// nextDue returns the earliest time at which advancing the pool could make progress
+// without a response arriving, or the zero time if there is no such time. It is the
+// earliest of every query's own next due time and every query's deadline, since a
+// query that passes its deadline is timed out.
+//
+// It reads each query's last reported due time rather than advancing it. A query
+// that has not been advanced this round cannot have gained an earlier deadline,
+// because a deadline is only set when a request is dispatched.
+func (p *Pool[K, N, M]) nextDue() time.Time {
+	var earliest time.Time
+	for _, qry := range p.queries {
+		for _, t := range [...]time.Time{qry.nextDue, qry.deadline} {
+			if t.IsZero() {
+				continue
+			}
+			if earliest.IsZero() || t.Before(earliest) {
+				earliest = t
+			}
+		}
+	}
+	return earliest
 }
 
 func (p *Pool[K, N, M]) advanceQuery(ctx context.Context, now time.Time, qry *Query[K, N, M], qev QueryEvent) (PoolState, bool) {
@@ -306,7 +329,9 @@ type PoolState interface {
 }
 
 // StatePoolIdle indicates that the pool is idle, i.e. there are no queries to process.
-type StatePoolIdle struct{}
+type StatePoolIdle struct {
+	NextDue time.Time // the earliest time advancing the pool could make progress, zero if there is none
+}
 
 // StatePoolFindCloser indicates that a pool query wants to send a find closer nodes message to a node.
 type StatePoolFindCloser[K kad.Key[K], N kad.NodeID[K]] struct {
@@ -326,11 +351,15 @@ type StatePoolSendMessage[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struc
 
 // StatePoolWaitingAtCapacity indicates that at least one query is waiting for results and the pool has reached
 // its maximum number of concurrent queries.
-type StatePoolWaitingAtCapacity struct{}
+type StatePoolWaitingAtCapacity struct {
+	NextDue time.Time // the earliest time advancing the pool could make progress, zero if there is none
+}
 
 // StatePoolWaitingWithCapacity indicates that at least one query is waiting for results but capacity to
 // start more is available.
-type StatePoolWaitingWithCapacity struct{}
+type StatePoolWaitingWithCapacity struct {
+	NextDue time.Time // the earliest time advancing the pool could make progress, zero if there is none
+}
 
 // StatePoolQueryFinished indicates that a query has finished.
 type StatePoolQueryFinished[K kad.Key[K], N kad.NodeID[K]] struct {

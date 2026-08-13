@@ -251,16 +251,16 @@ func (in *Include[K, N]) Advance(ctx context.Context, now time.Time, ev IncludeE
 	if len(in.checks) == in.cfg.Concurrency {
 		if !in.candidates.HasCapacity() {
 			in.counterCandidatesDroppedCapacity.Add(ctx, 1)
-			return &StateIncludeWaitingFull{}
+			return &StateIncludeWaitingFull{NextDue: in.nextDue()}
 		}
-		return &StateIncludeWaitingAtCapacity{}
+		return &StateIncludeWaitingAtCapacity{NextDue: in.nextDue()}
 	}
 
 	candidate, ok := in.candidates.Dequeue(ctx)
 	if !ok {
 		// No candidate in queue
 		if len(in.checks) > 0 {
-			return &StateIncludeWaitingWithCapacity{}
+			return &StateIncludeWaitingWithCapacity{NextDue: in.nextDue()}
 		}
 		return &StateIncludeIdle{}
 	}
@@ -275,6 +275,20 @@ func (in *Include[K, N]) Advance(ctx context.Context, now time.Time, ev IncludeE
 	return &StateIncludeConnectivityCheck[K, N]{
 		NodeID: candidate,
 	}
+}
+
+// nextDue returns the earliest time at which advancing the include state machine
+// could make progress without a response arriving, or the zero time if there is no
+// such time. That is the earliest check deadline, since abandoning an expired check
+// releases its slot for the next candidate.
+func (in *Include[K, N]) nextDue() time.Time {
+	var earliest time.Time
+	for _, ch := range in.checks {
+		if earliest.IsZero() || ch.Deadline.Before(earliest) {
+			earliest = ch.Deadline
+		}
+	}
+	return earliest
 }
 
 // nodeQueue is a bounded queue of unique NodeIDs
@@ -347,15 +361,21 @@ type StateIncludeIdle struct{}
 
 // StateIncludeWaitingAtCapacity indicates that an [Include] is waiting for responses for checks and
 // that the maximum number of concurrent checks has been reached.
-type StateIncludeWaitingAtCapacity struct{}
+type StateIncludeWaitingAtCapacity struct {
+	NextDue time.Time // the earliest time advancing the state machine could make progress, zero if there is none
+}
 
 // StateIncludeWaitingWithCapacity indicates that an [Include] is waiting for responses for checks
 // but has capacity to perform more.
-type StateIncludeWaitingWithCapacity struct{}
+type StateIncludeWaitingWithCapacity struct {
+	NextDue time.Time // the earliest time advancing the state machine could make progress, zero if there is none
+}
 
 // StateIncludeWaitingFull indicates that the include subsystem is waiting for responses for checks and
 // that the maximum number of queued candidates has been reached.
-type StateIncludeWaitingFull struct{}
+type StateIncludeWaitingFull struct {
+	NextDue time.Time // the earliest time advancing the state machine could make progress, zero if there is none
+}
 
 // StateIncludeRoutingUpdated indicates the routing table has been updated with a new node.
 type StateIncludeRoutingUpdated[K kad.Key[K], N kad.NodeID[K]] struct {

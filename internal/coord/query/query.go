@@ -91,6 +91,13 @@ type Query[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
 	// not act on it, since the caller decides what a query that has run out of time means.
 	deadline time.Time
 
+	// nextDue is the earliest time at which advancing the query again could make
+	// progress without a response arriving, or the zero time if there is no such
+	// time. It is recomputed whenever the query reports that it is waiting, and is
+	// never later than the truth: a request that completes only removes a deadline
+	// from the set, so a stale value wakes the caller early rather than late.
+	nextDue time.Time
+
 	// targetNodes is the set of responsive nodes thought to be closest to the target.
 	// It is populated once the query has been marked as finished.
 	// This will contain up to [QueryConfig.NumResults] nodes.
@@ -189,6 +196,11 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, now time.Time, ev QueryEve
 
 	var returnState QueryState
 
+	// atCapacityWaiting records that the walk stopped because every request slot is
+	// in use. The resulting state is built after the walk so that the scan for the
+	// next deadline is not run inside iter.Each.
+	atCapacityWaiting := false
+
 	q.iter.Each(ctx, func(ctx context.Context, ni *NodeStatus[K, N]) bool {
 		switch st := ni.State.(type) {
 		case *StateNodeWaiting:
@@ -198,11 +210,7 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, now time.Time, ev QueryEve
 				q.inFlight--
 				q.stats.Failure++
 			} else if atCapacity() {
-				returnState = &StateQueryWaitingAtCapacity{
-					QueryID:  q.id,
-					Stats:    q.stats,
-					Deadline: q.deadline,
-				}
+				atCapacityWaiting = true
 				return true
 			} else {
 				// The iterator is still waiting for a result from a node so can't be considered done
@@ -252,11 +260,7 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, now time.Time, ev QueryEve
 				return true
 			}
 
-			returnState = &StateQueryWaitingAtCapacity{
-				QueryID:  q.id,
-				Stats:    q.stats,
-				Deadline: q.deadline,
-			}
+			atCapacityWaiting = true
 
 			return true
 		case *StateNodeUnresponsive:
@@ -274,12 +278,24 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, now time.Time, ev QueryEve
 		return returnState
 	}
 
+	if atCapacityWaiting {
+		q.nextDue = q.earliestNodeDeadline(ctx)
+		return &StateQueryWaitingAtCapacity{
+			QueryID:  q.id,
+			Stats:    q.stats,
+			Deadline: q.deadline,
+			NextDue:  q.nextDue,
+		}
+	}
+
 	if q.inFlight > 0 {
 		// The iterator is still waiting for results and not at capacity
+		q.nextDue = q.earliestNodeDeadline(ctx)
 		return &StateQueryWaitingWithCapacity{
 			QueryID:  q.id,
 			Stats:    q.stats,
 			Deadline: q.deadline,
+			NextDue:  q.nextDue,
 		}
 	}
 
@@ -293,8 +309,25 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, now time.Time, ev QueryEve
 	}
 }
 
+// earliestNodeDeadline returns the earliest request deadline among the nodes the
+// query is waiting on, or the zero time if it is waiting on none. That instant is
+// when advancing the query would next mark a node unresponsive, which is the only
+// way it can make progress without a response arriving.
+func (q *Query[K, N, M]) earliestNodeDeadline(ctx context.Context) time.Time {
+	var earliest time.Time
+	q.iter.Each(ctx, func(ctx context.Context, ni *NodeStatus[K, N]) bool {
+		st, ok := ni.State.(*StateNodeWaiting)
+		if ok && (earliest.IsZero() || st.Deadline.Before(earliest)) {
+			earliest = st.Deadline
+		}
+		return false
+	})
+	return earliest
+}
+
 func (q *Query[K, N, M]) markFinished(ctx context.Context, now time.Time) {
 	q.finished = true
+	q.nextDue = time.Time{}
 	if q.stats.End.IsZero() {
 		q.stats.End = now
 	}
@@ -416,6 +449,7 @@ type StateQueryWaitingAtCapacity struct {
 	QueryID  coordt.QueryID
 	Stats    QueryStats
 	Deadline time.Time // the time by which the query must have completed
+	NextDue  time.Time // the earliest time advancing the query could make progress, zero if there is none
 }
 
 // StateQueryWaitingWithCapacity indicates that the [Query] is waiting for results but has no further nodes to contact.
@@ -423,6 +457,7 @@ type StateQueryWaitingWithCapacity struct {
 	QueryID  coordt.QueryID
 	Stats    QueryStats
 	Deadline time.Time // the time by which the query must have completed
+	NextDue  time.Time // the earliest time advancing the query could make progress, zero if there is none
 }
 
 // queryState() ensures that only [Query] states can be assigned to a QueryState.

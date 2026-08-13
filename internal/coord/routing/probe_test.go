@@ -868,3 +868,87 @@ func TestProbeTimeout(t *testing.T) {
 // epoch is the base instant for tests. State machines take the current time as a
 // parameter, so tests move time by passing a later instant rather than by advancing a clock.
 var epoch = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// TestProbeReportsNextDue checks that the probe state machine reports the earliest instant
+// at which advancing it could make progress, when it is idle and when it is at capacity.
+func TestProbeReportsNextDue(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+
+	cfg := DefaultProbeConfig()
+	cfg.CheckInterval = 10 * time.Minute
+	cfg.Timeout = time.Minute
+	cfg.Concurrency = 1
+
+	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
+	require.NoError(t, err)
+	rt.AddNode(tiny.NewNode(4))
+	rt.AddNode(tiny.NewNode(5))
+
+	sm, err := NewProbe[tiny.Key, tiny.Node](rt, cfg)
+	require.NoError(t, err)
+
+	// with nothing scheduled there is nothing due
+	state := sm.Advance(ctx, now, &EventProbePoll{})
+	require.IsType(t, &StateProbeIdle{}, state)
+	require.True(t, state.(*StateProbeIdle).NextDue.IsZero())
+
+	// a node scheduled for its first check makes that check the next thing due
+	state = sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{NodeID: tiny.NewNode(4)})
+	require.IsType(t, &StateProbeIdle{}, state)
+	require.Equal(t, epoch.Add(cfg.CheckInterval), state.(*StateProbeIdle).NextDue)
+
+	// a node added later is checked later, so the earlier check remains the next thing due
+	now = epoch.Add(5 * time.Minute)
+	state = sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{NodeID: tiny.NewNode(5)})
+	require.IsType(t, &StateProbeIdle{}, state)
+	require.Equal(t, epoch.Add(cfg.CheckInterval), state.(*StateProbeIdle).NextDue)
+
+	// the earlier check starts once it falls due, saturating the single concurrency slot
+	now = epoch.Add(cfg.CheckInterval)
+	state = sm.Advance(ctx, now, &EventProbePoll{})
+	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
+	require.True(t, key.Equal(tiny.Key(4), state.(*StateProbeConnectivityCheck[tiny.Key, tiny.Node]).NodeID.Key()))
+
+	// the deadline of the in flight check is due before the second node's scheduled
+	// check, because timing it out is what frees capacity to start that check
+	state = sm.Advance(ctx, now, &EventProbePoll{})
+	require.IsType(t, &StateProbeWaitingAtCapacity{}, state)
+	require.Equal(t, now.Add(cfg.Timeout), state.(*StateProbeWaitingAtCapacity).NextDue)
+}
+
+// TestProbeReportsNextDueWithSpareCapacity checks that the probe state machine reports the
+// deadline of an in flight check while it still has capacity to start further checks.
+func TestProbeReportsNextDueWithSpareCapacity(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+
+	cfg := DefaultProbeConfig()
+	cfg.CheckInterval = 10 * time.Minute
+	cfg.Timeout = time.Minute
+	cfg.Concurrency = 2
+
+	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
+	require.NoError(t, err)
+	rt.AddNode(tiny.NewNode(4))
+	rt.AddNode(tiny.NewNode(5))
+
+	sm, err := NewProbe[tiny.Key, tiny.Node](rt, cfg)
+	require.NoError(t, err)
+
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{NodeID: tiny.NewNode(4)})
+	require.IsType(t, &StateProbeIdle{}, state)
+
+	now = epoch.Add(5 * time.Minute)
+	state = sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{NodeID: tiny.NewNode(5)})
+	require.IsType(t, &StateProbeIdle{}, state)
+
+	// the first node's check starts, leaving one slot free and the second node not yet due
+	now = epoch.Add(cfg.CheckInterval)
+	state = sm.Advance(ctx, now, &EventProbePoll{})
+	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
+
+	state = sm.Advance(ctx, now, &EventProbePoll{})
+	require.IsType(t, &StateProbeWaitingWithCapacity{}, state)
+	require.Equal(t, now.Add(cfg.Timeout), state.(*StateProbeWaitingWithCapacity).NextDue)
+}
