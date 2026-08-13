@@ -469,6 +469,41 @@ func TestDHT_handlePutValue_happy_path_ipns_record(t *testing.T) {
 	assert.True(t, proto.Equal(r, req.Record))
 }
 
+// TestDHT_handlePutValue_echoes_record checks that a stored record is echoed
+// back with the peer bearing fields stripped.
+func TestDHT_handlePutValue_echoes_record(t *testing.T) {
+	ctx := context.Background()
+
+	clk := clock.NewMock()
+	clk.Set(time.Now()) // needed because record validators don't use mock clocks
+
+	cfg := DefaultConfig()
+	cfg.Clock = clk
+
+	d := newTestDHTWithConfig(t, cfg)
+
+	remote, priv := newIdentity(t)
+
+	req := newPutIPNSRequest(t, clk, priv, 0, time.Hour)
+
+	req.CloserPeers = []*pb.Message_Peer{pb.FromAddrInfo(newAddrInfo(t))}
+	req.ProviderPeers = []*pb.Message_Peer{pb.FromAddrInfo(newAddrInfo(t))}
+
+	wantKey := req.GetKey()
+	wantValue := req.GetRecord().GetValue()
+
+	resp, err := d.handlePutValue(ctx, remote, req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	assert.Equal(t, pb.Message_PUT_VALUE, resp.GetType())
+	assert.Equal(t, wantKey, resp.GetKey())
+	assert.Equal(t, wantValue, resp.GetRecord().GetValue())
+
+	assert.Nil(t, resp.CloserPeers)
+	assert.Nil(t, resp.ProviderPeers)
+}
+
 func TestDHT_handlePutValue_nil_records(t *testing.T) {
 	d := newTestDHT(t)
 
@@ -533,11 +568,15 @@ func TestDHT_handlePutValue_worse_ipns_record_after_first_put(t *testing.T) {
 	worseReq := newPutIPNSRequest(t, d.cfg.Clock, priv, 0, time.Hour)
 
 	for i, req := range []*pb.Message{goodReq, worseReq} {
+		want := req.GetRecord().GetValue()
 		resp, err := d.handlePutValue(context.Background(), remote, req)
 		switch i {
 		case 0:
 			assert.NoError(t, err)
-			assert.Nil(t, resp)
+			// a stored record is acknowledged by echoing it back
+			if assert.NotNil(t, resp) {
+				assert.Equal(t, want, resp.GetRecord().GetValue())
+			}
 		case 1:
 			assert.Error(t, err)
 			assert.Nil(t, resp)

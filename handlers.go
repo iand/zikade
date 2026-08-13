@@ -66,7 +66,18 @@ func (d *DHT) handlePing(ctx context.Context, remote peer.ID, req *pb.Message) (
 	return &pb.Message{Type: pb.Message_PING}, nil
 }
 
-// handleGetValue handles PUT_VALUE RPCs from remote peers.
+// stripPeerRecords drops the peer bearing fields of a message.
+//
+// Requests are echoed back as responses, so without this a remote peer could
+// stuff CloserPeers or ProviderPeers into a request and have this node re-emit
+// peer information it never vouched for.
+func stripPeerRecords(msg *pb.Message) {
+	msg.CloserPeers = nil
+	msg.ProviderPeers = nil
+}
+
+// handlePutValue handles PUT_VALUE RPCs from remote peers. It echoes the
+// request back as the response once the record is stored.
 func (d *DHT) handlePutValue(ctx context.Context, remote peer.ID, req *pb.Message) (*pb.Message, error) {
 	// validate incoming request -> key and record must not be empty/nil
 	k := string(req.GetKey())
@@ -96,9 +107,13 @@ func (d *DHT) handlePutValue(ctx context.Context, remote peer.ID, req *pb.Messag
 		return nil, fmt.Errorf("unsupported record type: %s", ns)
 	}
 
-	_, err = backend.Store(ctx, path, rec)
+	if _, err = backend.Store(ctx, path, rec); err != nil {
+		return nil, err
+	}
 
-	return nil, err
+	stripPeerRecords(req)
+
+	return req, nil
 }
 
 // handleGetValue handles GET_VALUE RPCs from remote peers.

@@ -1,7 +1,9 @@
 package coord
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -233,6 +235,16 @@ func (b *PooledBroadcastBehaviour) perfomNextInbound(ctx context.Context) (Behav
 				Response: ev.Response,
 			})
 		}
+		if err := verifyStoredRecord(ev.Request, ev.Response); err != nil {
+			cmd = &brdcst.EventPoolStoreRecordFailure[kadt.Key, kadt.PeerID, *pb.Message]{
+				QueryID: ev.QueryID,
+				NodeID:  ev.To,
+				Request: ev.Request,
+				Error:   err,
+			}
+			break
+		}
+
 		// TODO: How do we know it's a StoreRecord response?
 		cmd = &brdcst.EventPoolStoreRecordSuccess[kadt.Key, kadt.PeerID, *pb.Message]{
 			QueryID:  ev.QueryID,
@@ -335,4 +347,22 @@ func (w *BroadcastWaiter) NotifyProgressed() chan<- CtxEvent[*EventQueryProgress
 
 func (w *BroadcastWaiter) NotifyFinished() chan<- CtxEvent[*EventBroadcastFinished] {
 	return w.finished
+}
+
+// verifyStoredRecord checks that a remote node stored the record it was sent.
+// Only PUT_VALUE draws an echoed record back.
+func verifyStoredRecord(req, resp *pb.Message) error {
+	if req.GetType() != pb.Message_PUT_VALUE {
+		return nil
+	}
+
+	if resp == nil {
+		return fmt.Errorf("no response to PUT_VALUE")
+	}
+
+	if !bytes.Equal(resp.GetRecord().GetValue(), req.GetRecord().GetValue()) {
+		return fmt.Errorf("record not stored correctly")
+	}
+
+	return nil
 }
