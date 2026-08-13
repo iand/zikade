@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -29,6 +30,17 @@ import (
 
 // interopTimeout bounds each interop test.
 const interopTimeout = 20 * time.Second
+
+const (
+	// interopSettleTimeout bounds how long a test waits for the effect of a message
+	// that draws no response to become observable. Such a message and the request
+	// that checks it travel on separate streams, so the check can overtake it.
+	interopSettleTimeout = 2 * time.Second
+
+	// interopPollInterval is the gap between checks while waiting out
+	// interopSettleTimeout.
+	interopPollInterval = 10 * time.Millisecond
+)
 
 // refMessageSender sends messages to a peer speaking the Amino protocol.
 type refMessageSender struct {
@@ -295,20 +307,26 @@ func TestInteropAddProviderFromReferenceClient(t *testing.T) {
 	// ADD_PROVIDER draws no response, so the write succeeding proves little on
 	// its own. GET_PROVIDERS is a request/response exchange, so it is what
 	// catches a server that stored nothing.
-	provs, _, err := pm.GetProviders(ctx, d.host.ID(), c.Hash())
-	if err != nil {
-		t.Fatalf("reference client getting providers from zikade server: %v", err)
-	}
-
-	found := false
-	for _, p := range provs {
-		if p.ID == clientHost.ID() {
-			found = true
-			break
+	//
+	// The reference message sender opens a stream per message, so the two travel
+	// on separate streams and the server handles them on separate goroutines. A
+	// single read can therefore overtake the write it is checking, which is why
+	// this polls rather than reading once.
+	deadline := time.Now().Add(interopSettleTimeout)
+	for {
+		provs, _, err := pm.GetProviders(ctx, d.host.ID(), c.Hash())
+		if err != nil {
+			t.Fatalf("reference client getting providers from zikade server: %v", err)
 		}
-	}
 
-	if !found {
-		t.Errorf("provider %s not returned by zikade server, got %v", clientHost.ID(), provs)
+		if slices.ContainsFunc(provs, func(p *peer.AddrInfo) bool { return p.ID == clientHost.ID() }) {
+			return
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("provider %s not returned by zikade server within %s, got %v", clientHost.ID(), interopSettleTimeout, provs)
+		}
+
+		time.Sleep(interopPollInterval)
 	}
 }
