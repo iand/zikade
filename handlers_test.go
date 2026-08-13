@@ -425,6 +425,76 @@ func BenchmarkDHT_handlePutValue_single_peer(b *testing.B) {
 	}
 }
 
+func TestStripPeerRecords(t *testing.T) {
+	peers := func(n int) []*pb.Message_Peer {
+		out := make([]*pb.Message_Peer, n)
+		for i := range out {
+			out[i] = pb.FromAddrInfo(newAddrInfo(t))
+		}
+		return out
+	}
+
+	testCases := []struct {
+		name          string
+		closerPeers   []*pb.Message_Peer
+		providerPeers []*pb.Message_Peer
+	}{
+		{
+			name:          "both populated",
+			closerPeers:   peers(2),
+			providerPeers: peers(2),
+		},
+		{
+			name:        "closer peers only",
+			closerPeers: peers(1),
+		},
+		{
+			name:          "provider peers only",
+			providerPeers: peers(1),
+		},
+		{
+			name: "neither populated",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := []byte("/pk/key")
+			rec := &recpb.Record{Key: key, Value: []byte("value")}
+
+			msg := &pb.Message{
+				Type:          pb.Message_PUT_VALUE,
+				Key:           key,
+				Record:        rec,
+				CloserPeers:   tc.closerPeers,
+				ProviderPeers: tc.providerPeers,
+			}
+
+			stripPeerRecords(msg)
+
+			if msg.CloserPeers != nil {
+				t.Errorf("got CloserPeers %v, want nil", msg.CloserPeers)
+			}
+
+			if msg.ProviderPeers != nil {
+				t.Errorf("got ProviderPeers %v, want nil", msg.ProviderPeers)
+			}
+
+			if msg.GetType() != pb.Message_PUT_VALUE {
+				t.Errorf("got type %v, want %v", msg.GetType(), pb.Message_PUT_VALUE)
+			}
+
+			if !bytes.Equal(msg.GetKey(), key) {
+				t.Errorf("got key %x, want %x", msg.GetKey(), key)
+			}
+
+			if msg.GetRecord() != rec {
+				t.Errorf("got record %v, want %v", msg.GetRecord(), rec)
+			}
+		})
+	}
+}
+
 func TestDHT_handlePutValue_happy_path_ipns_record(t *testing.T) {
 	ctx := context.Background()
 
