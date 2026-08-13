@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ipfs/go-libdht/kad"
+	"github.com/ipfs/go-libdht/kad/key"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/probe-lab/go-libdht/kad"
-	"github.com/probe-lab/go-libdht/kad/key"
 
 	"github.com/probe-lab/zikade/kadt"
 	"github.com/probe-lab/zikade/pb"

@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/benbjohnson/clock"
-	"github.com/probe-lab/go-libdht/kad"
+	"github.com/ipfs/go-libdht/kad"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"

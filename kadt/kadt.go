@@ -4,10 +4,10 @@ package kadt
 import (
 	"crypto/sha256"
 
+	"github.com/ipfs/go-libdht/kad"
+	"github.com/ipfs/go-libdht/kad/key/bit256"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
-	"github.com/probe-lab/go-libdht/kad"
-	"github.com/probe-lab/go-libdht/kad/key/bit256"
 )
 
 // Key is a type alias for the type of key that's used with this DHT

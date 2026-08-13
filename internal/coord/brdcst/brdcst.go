@@ -1,7 +1,7 @@
 package brdcst
 
 import (
-	"github.com/probe-lab/go-libdht/kad"
+	"github.com/ipfs/go-libdht/kad"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 )

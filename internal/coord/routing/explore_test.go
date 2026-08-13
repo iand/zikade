@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
-	"github.com/probe-lab/go-libdht/kad/triert"
+	"github.com/ipfs/go-libdht/kad/triert"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

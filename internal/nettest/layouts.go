@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/benbjohnson/clock"
-	"github.com/probe-lab/go-libdht/kad/triert"
+	"github.com/ipfs/go-libdht/kad/triert"
 
 	"github.com/probe-lab/zikade/kadt"
 )

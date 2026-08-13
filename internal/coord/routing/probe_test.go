@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
-	"github.com/probe-lab/go-libdht/kad/key"
-	"github.com/probe-lab/go-libdht/kad/triert"
+	"github.com/ipfs/go-libdht/kad/key"
+	"github.com/ipfs/go-libdht/kad/triert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/probe-lab/zikade/internal/tiny"

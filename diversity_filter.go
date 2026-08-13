@@ -3,11 +3,11 @@ package zikade
 import (
 	"sync"
 
+	"github.com/ipfs/go-libdht/kad/triert"
 	"github.com/libp2p/go-libp2p-kbucket/peerdiversity"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
-	"github.com/probe-lab/go-libdht/kad/triert"
 	"github.com/probe-lab/zikade/kadt"
 )
 
