@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad/key"
@@ -372,4 +373,61 @@ func TestPoolRespectsConcurrency(t *testing.T) {
 	st = state.(*StatePoolFindCloser[tiny.Key, tiny.Node])
 	require.Equal(t, queryID3, st.QueryID)
 	require.Equal(t, a, st.NodeID)
+}
+
+func TestPoolQueryTimeout(t *testing.T) {
+	testCases := []struct {
+		name             string
+		queryConcurrency int
+	}{
+		{name: "waiting with capacity", queryConcurrency: 3},
+		{name: "waiting at capacity", queryConcurrency: 1},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			clk := clock.NewMock()
+			cfg := DefaultPoolConfig()
+			cfg.Clock = clk
+			cfg.Timeout = 3 * time.Minute
+			cfg.QueryConcurrency = tc.queryConcurrency
+
+			// the request must outlive the query so the query is still waiting for a
+			// response when its own deadline passes
+			cfg.RequestTimeout = time.Hour
+
+			self := tiny.NewNode(0)
+			p, err := NewPool[tiny.Key, tiny.Node, tiny.Message](self, cfg)
+			require.NoError(t, err)
+
+			target := tiny.Key(0b00000001)
+			a := tiny.NewNode(0b00000100) // 4
+
+			queryID := coordt.QueryID("test")
+
+			state := p.Advance(ctx, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+				QueryID: queryID,
+				Target:  target,
+				Seed:    []tiny.Node{a},
+			})
+			require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
+
+			// the node never responds, but the query has not run out of time yet
+			clk.Add(cfg.Timeout - time.Second)
+			state = p.Advance(ctx, &EventPoolPoll{})
+			require.IsType(t, &StatePoolWaitingWithCapacity{}, state)
+
+			// once the deadline passes the pool gives up on the query
+			clk.Add(2 * time.Second)
+			state = p.Advance(ctx, &EventPoolPoll{})
+			require.IsType(t, &StatePoolQueryTimeout{}, state)
+			stt := state.(*StatePoolQueryTimeout)
+			require.Equal(t, queryID, stt.QueryID)
+
+			// the timed out query is no longer held by the pool
+			state = p.Advance(ctx, &EventPoolPoll{})
+			require.IsType(t, &StatePoolIdle{}, state)
+		})
+	}
 }

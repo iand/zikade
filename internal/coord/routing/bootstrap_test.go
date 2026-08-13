@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad/key"
@@ -383,4 +384,37 @@ func TestBootstrapFinishedIgnoresLaterFailures(t *testing.T) {
 
 	// bootstrap should ignore late message and now be idle
 	require.IsType(t, &StateBootstrapIdle{}, state)
+}
+
+func TestBootstrapTimeout(t *testing.T) {
+	ctx := context.Background()
+	clk := clock.NewMock()
+	cfg := DefaultBootstrapConfig()
+	cfg.Clock = clk
+	cfg.Timeout = 3 * time.Minute
+
+	// the request must outlive the bootstrap so its query is still waiting for a
+	// response when the bootstrap deadline passes
+	cfg.RequestTimeout = time.Hour
+
+	self := tiny.NewNode(0)
+	bs, err := NewBootstrap[tiny.Key](self, cfg)
+	require.NoError(t, err)
+
+	a := tiny.NewNode(0b00000100) // 4
+
+	state := bs.Advance(ctx, &EventBootstrapStart[tiny.Key, tiny.Node]{
+		KnownClosestNodes: []tiny.Node{a},
+	})
+	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	// the node never responds, but the bootstrap has not run out of time yet
+	clk.Add(cfg.Timeout - time.Second)
+	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	require.IsType(t, &StateBootstrapWaiting{}, state)
+
+	// once the deadline passes the bootstrap gives up
+	clk.Add(2 * time.Second)
+	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	require.IsType(t, &StateBootstrapTimeout{}, state)
 }

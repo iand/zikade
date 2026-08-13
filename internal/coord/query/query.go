@@ -28,6 +28,7 @@ type QueryConfig struct {
 	Concurrency    int           // the maximum number of concurrent requests that may be in flight
 	NumResults     int           // the minimum number of nodes to successfully contact before considering iteration complete
 	RequestTimeout time.Duration // the timeout for contacting a single node
+	Timeout        time.Duration // the time to wait before the query is considered to have stopped making progress
 	Clock          clock.Clock   // a clock that may replaced by a mock when testing
 }
 
@@ -57,6 +58,12 @@ func (cfg *QueryConfig) Validate() error {
 			Err:       fmt.Errorf("request timeout must be greater than zero"),
 		}
 	}
+	if cfg.Timeout < 1 {
+		return &errs.ConfigurationError{
+			Component: "QueryConfig",
+			Err:       fmt.Errorf("timeout must be greater than zero"),
+		}
+	}
 	return nil
 }
 
@@ -67,6 +74,7 @@ func DefaultQueryConfig() *QueryConfig {
 		Concurrency:    3,
 		NumResults:     20,
 		RequestTimeout: time.Minute,
+		Timeout:        5 * time.Minute,
 		Clock:          clock.New(), // use standard time
 	}
 }
@@ -86,6 +94,11 @@ type Query[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
 
 	// finished indicates that the query has completed its work or has been stopped.
 	finished bool
+
+	// deadline is the time by which the query must have completed. It is set when the
+	// query contacts its first node. The query reports it in its waiting states but does
+	// not act on it, since the caller decides what a query that has run out of time means.
+	deadline time.Time
 
 	// targetNodes is the set of responsive nodes thought to be closest to the target.
 	// It is populated once the query has been marked as finished.
@@ -195,8 +208,9 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 				q.stats.Failure++
 			} else if atCapacity() {
 				returnState = &StateQueryWaitingAtCapacity{
-					QueryID: q.id,
-					Stats:   q.stats,
+					QueryID:  q.id,
+					Stats:    q.stats,
+					Deadline: q.deadline,
 				}
 				return true
 			} else {
@@ -226,6 +240,7 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 				q.stats.Requests++
 				if q.stats.Start.IsZero() {
 					q.stats.Start = q.cfg.Clock.Now()
+					q.deadline = q.stats.Start.Add(q.cfg.Timeout)
 				}
 
 				if q.findCloser {
@@ -247,8 +262,9 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 			}
 
 			returnState = &StateQueryWaitingAtCapacity{
-				QueryID: q.id,
-				Stats:   q.stats,
+				QueryID:  q.id,
+				Stats:    q.stats,
+				Deadline: q.deadline,
 			}
 
 			return true
@@ -270,8 +286,9 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 	if q.inFlight > 0 {
 		// The iterator is still waiting for results and not at capacity
 		return &StateQueryWaitingWithCapacity{
-			QueryID: q.id,
-			Stats:   q.stats,
+			QueryID:  q.id,
+			Stats:    q.stats,
+			Deadline: q.deadline,
 		}
 	}
 
@@ -405,14 +422,16 @@ type StateQuerySendMessage[K kad.Key[K], N kad.NodeID[K], M coordt.Message] stru
 
 // StateQueryWaitingAtCapacity indicates that the [Query] is waiting for results and is at capacity.
 type StateQueryWaitingAtCapacity struct {
-	QueryID coordt.QueryID
-	Stats   QueryStats
+	QueryID  coordt.QueryID
+	Stats    QueryStats
+	Deadline time.Time // the time by which the query must have completed
 }
 
 // StateQueryWaitingWithCapacity indicates that the [Query] is waiting for results but has no further nodes to contact.
 type StateQueryWaitingWithCapacity struct {
-	QueryID coordt.QueryID
-	Stats   QueryStats
+	QueryID  coordt.QueryID
+	Stats    QueryStats
+	Deadline time.Time // the time by which the query must have completed
 }
 
 // queryState() ensures that only [Query] states can be assigned to a QueryState.

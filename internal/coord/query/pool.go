@@ -218,8 +218,7 @@ func (p *Pool[K, N, M]) advanceQuery(ctx context.Context, qry *Query[K, N, M], q
 			ClosestNodes: st.ClosestNodes,
 		}, true
 	case *StateQueryWaitingAtCapacity:
-		elapsed := p.cfg.Clock.Since(qry.stats.Start)
-		if elapsed > p.cfg.Timeout {
+		if p.cfg.Clock.Now().After(st.Deadline) {
 			p.removeQuery(qry.id)
 			return &StatePoolQueryTimeout{
 				QueryID: st.QueryID,
@@ -228,8 +227,7 @@ func (p *Pool[K, N, M]) advanceQuery(ctx context.Context, qry *Query[K, N, M], q
 		}
 		p.queriesInFlight++
 	case *StateQueryWaitingWithCapacity:
-		elapsed := p.cfg.Clock.Since(qry.stats.Start)
-		if elapsed > p.cfg.Timeout {
+		if p.cfg.Clock.Now().After(st.Deadline) {
 			p.removeQuery(qry.id)
 			return &StatePoolQueryTimeout{
 				QueryID: st.QueryID,
@@ -267,6 +265,7 @@ func (p *Pool[K, N, M]) addQuery(ctx context.Context, queryID coordt.QueryID, ta
 	qryCfg.Clock = p.cfg.Clock
 	qryCfg.Concurrency = p.cfg.QueryConcurrency
 	qryCfg.RequestTimeout = p.cfg.RequestTimeout
+	qryCfg.Timeout = p.cfg.Timeout
 
 	if numResults > 0 {
 		qryCfg.NumResults = numResults
@@ -294,6 +293,7 @@ func (p *Pool[K, N, M]) addFindCloserQuery(ctx context.Context, queryID coordt.Q
 	qryCfg.Clock = p.cfg.Clock
 	qryCfg.Concurrency = p.cfg.QueryConcurrency
 	qryCfg.RequestTimeout = p.cfg.RequestTimeout
+	qryCfg.Timeout = p.cfg.Timeout
 
 	if numResults > 0 {
 		qryCfg.NumResults = numResults

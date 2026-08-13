@@ -282,6 +282,7 @@ func (e *Explore[K, N]) Advance(ctx context.Context, ev ExploreEvent) (out Explo
 	qryCfg.Clock = e.cfg.Clock
 	qryCfg.Concurrency = e.cfg.RequestConcurrency
 	qryCfg.RequestTimeout = e.cfg.RequestTimeout
+	qryCfg.Timeout = e.cfg.Timeout
 
 	qry, err := query.NewFindCloserQuery[K, N, any](e.self, ExploreQueryID, node.Key(), iter, seeds, qryCfg)
 	if err != nil {
@@ -320,8 +321,7 @@ func (e *Explore[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent) 
 			Stats: st.Stats,
 		}
 	case *query.StateQueryWaitingAtCapacity:
-		elapsed := e.cfg.Clock.Since(st.Stats.Start)
-		if elapsed > e.cfg.Timeout {
+		if e.cfg.Clock.Now().After(st.Deadline) {
 			e.counterFindFailed.Add(ctx, 1, metric.WithAttributeSet(e.cplAttributeSet.Load().(attribute.Set)))
 			span.SetAttributes(attribute.String("out_state", "StateExploreTimeout"))
 			e.clearQuery()
@@ -336,8 +336,7 @@ func (e *Explore[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent) 
 			Stats: st.Stats,
 		}
 	case *query.StateQueryWaitingWithCapacity:
-		elapsed := e.cfg.Clock.Since(st.Stats.Start)
-		if elapsed > e.cfg.Timeout {
+		if e.cfg.Clock.Now().After(st.Deadline) {
 			e.counterFindFailed.Add(ctx, 1, metric.WithAttributeSet(e.cplAttributeSet.Load().(attribute.Set)))
 			span.SetAttributes(attribute.String("out_state", "StateExploreTimeout"))
 			e.clearQuery()

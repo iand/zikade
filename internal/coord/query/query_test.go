@@ -48,6 +48,14 @@ func TestQueryConfigValidate(t *testing.T) {
 		cfg.NumResults = -1
 		require.Error(t, cfg.Validate())
 	})
+
+	t.Run("timeout positive", func(t *testing.T) {
+		cfg := DefaultQueryConfig()
+		cfg.Timeout = 0
+		require.Error(t, cfg.Validate())
+		cfg.Timeout = -1
+		require.Error(t, cfg.Validate())
+	})
 }
 
 func TestQueryMessagesNode(t *testing.T) {

@@ -199,6 +199,7 @@ func (b *Bootstrap[K, N]) Advance(ctx context.Context, ev BootstrapEvent) (out B
 		qryCfg.Clock = b.cfg.Clock
 		qryCfg.Concurrency = b.cfg.RequestConcurrency
 		qryCfg.RequestTimeout = b.cfg.RequestTimeout
+		qryCfg.Timeout = b.cfg.Timeout
 
 		qry, err := query.NewFindCloserQuery[K, N, any](b.self, BootstrapQueryID, b.self.Key(), iter, tev.KnownClosestNodes, qryCfg)
 		if err != nil {
@@ -261,8 +262,7 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent
 			Stats: st.Stats,
 		}
 	case *query.StateQueryWaitingAtCapacity:
-		elapsed := b.cfg.Clock.Since(st.Stats.Start)
-		if elapsed > b.cfg.Timeout {
+		if b.cfg.Clock.Now().After(st.Deadline) {
 			b.counterFindFailed.Add(ctx, 1)
 			span.SetAttributes(attribute.String("out_state", "StateBootstrapTimeout"))
 			return &StateBootstrapTimeout{
@@ -274,8 +274,7 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent
 			Stats: st.Stats,
 		}
 	case *query.StateQueryWaitingWithCapacity:
-		elapsed := b.cfg.Clock.Since(st.Stats.Start)
-		if elapsed > b.cfg.Timeout {
+		if b.cfg.Clock.Now().After(st.Deadline) {
 			b.counterFindFailed.Add(ctx, 1)
 			span.SetAttributes(attribute.String("out_state", "StateBootstrapTimeout"))
 			return &StateBootstrapTimeout{

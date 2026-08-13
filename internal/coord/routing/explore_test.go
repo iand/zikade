@@ -420,3 +420,41 @@ func TestExploreQueriesNextHighestCpl(t *testing.T) {
 	// the query should be contacting the nearest known node
 	require.Equal(t, a, st.NodeID)
 }
+
+func TestExploreQueryTimeout(t *testing.T) {
+	ctx := context.Background()
+	clk := clock.NewMock()
+	cfg := DefaultExploreConfig()
+	cfg.Clock = clk
+	cfg.Timeout = 3 * time.Minute
+
+	// the request must outlive the explore so its query is still waiting for a
+	// response when the explore deadline passes
+	cfg.RequestTimeout = time.Hour
+
+	self := tiny.NewNode(128)
+	rt, err := triert.New[tiny.Key, tiny.Node](self, nil)
+	require.NoError(t, err)
+
+	a := tiny.NewNode(4)
+	rt.AddNode(a)
+
+	schedule := DefaultDynamicSchedule(t, clk)
+	ex, err := NewExplore[tiny.Key, tiny.Node](self, rt, tiny.NodeWithCpl, schedule, cfg)
+	require.NoError(t, err)
+
+	// advance the clock to the due time of the first explore so a query starts
+	clk.Add(schedule.cplInterval(schedule.maxCpl))
+	state := ex.Advance(ctx, &EventExplorePoll{})
+	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	// the node never responds, but the explore has not run out of time yet
+	clk.Add(cfg.Timeout - time.Second)
+	state = ex.Advance(ctx, &EventExplorePoll{})
+	require.IsType(t, &StateExploreWaiting{}, state)
+
+	// once the deadline passes the explore gives up on its query
+	clk.Add(2 * time.Second)
+	state = ex.Advance(ctx, &EventExplorePoll{})
+	require.IsType(t, &StateExploreQueryTimeout{}, state)
+}
