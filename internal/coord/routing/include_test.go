@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ipfs/go-libdht/kad/key"
 	"github.com/ipfs/go-libdht/kad/triert"
@@ -274,4 +275,47 @@ func TestIncludeConnectivityCheckFailure(t *testing.T) {
 	foundNode, found := rt.GetNode(tiny.Key(4))
 	require.False(t, found)
 	require.Zero(t, foundNode)
+}
+
+func TestIncludeConnectivityCheckTimeout(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+	cfg := DefaultIncludeConfig()
+	cfg.Concurrency = 2
+
+	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
+	require.NoError(t, err)
+
+	p, err := NewInclude[tiny.Key, tiny.Node](rt, cfg)
+	require.NoError(t, err)
+
+	// fill every check slot with a node that never answers
+	for i := range cfg.Concurrency {
+		state := p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+			NodeID: tiny.NewNode(tiny.Key(4 << i)),
+		})
+		require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
+	}
+
+	// a further candidate has to wait for a slot
+	later := tiny.NewNode(0b01000000)
+	state := p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{NodeID: later})
+	require.IsType(t, &StateIncludeWaitingAtCapacity{}, state)
+
+	// before the deadline the checks still hold their slots
+	state = p.Advance(ctx, now.Add(cfg.Timeout), &EventIncludePoll{})
+	require.IsType(t, &StateIncludeWaitingAtCapacity{}, state)
+
+	// once the deadline passes the slots are released and the waiting candidate is checked
+	state = p.Advance(ctx, now.Add(cfg.Timeout+time.Nanosecond), &EventIncludePoll{})
+	require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
+
+	st := state.(*StateIncludeConnectivityCheck[tiny.Key, tiny.Node])
+	require.Equal(t, later, st.NodeID)
+
+	// none of the abandoned candidates reached the routing table
+	for i := range cfg.Concurrency {
+		_, found := rt.GetNode(tiny.Key(4 << i))
+		require.False(t, found)
+	}
 }

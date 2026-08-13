@@ -16,8 +16,11 @@ import (
 )
 
 type check[K kad.Key[K], N kad.NodeID[K]] struct {
-	NodeID  N
-	Started time.Time
+	NodeID N
+
+	// Deadline is the time by which the check must have drawn a response. Past it
+	// the check is abandoned and its slot released.
+	Deadline time.Time
 }
 
 type Include[K kad.Key[K], N kad.NodeID[K]] struct {
@@ -234,6 +237,17 @@ func (in *Include[K, N]) Advance(ctx context.Context, now time.Time, ev IncludeE
 		panic(fmt.Sprintf("unexpected event: %T", tev))
 	}
 
+	// Abandon checks that have run out of time so their slot can be reused. A node
+	// that accepts the check and never answers would otherwise hold a slot for the
+	// lifetime of the process. This runs after the event has been handled so that a
+	// response arriving in the same advance is still honoured.
+	for k, ch := range in.checks {
+		if now.After(ch.Deadline) {
+			delete(in.checks, k)
+			in.counterChecksFailed.Add(ctx, 1)
+		}
+	}
+
 	if len(in.checks) == in.cfg.Concurrency {
 		if !in.candidates.HasCapacity() {
 			in.counterCandidatesDroppedCapacity.Add(ctx, 1)
@@ -252,8 +266,8 @@ func (in *Include[K, N]) Advance(ctx context.Context, now time.Time, ev IncludeE
 	}
 
 	in.checks[key.HexString(candidate.Key())] = check[K, N]{
-		NodeID:  candidate,
-		Started: now,
+		NodeID:   candidate,
+		Deadline: now.Add(in.cfg.Timeout),
 	}
 
 	// Ask the node to find itself
