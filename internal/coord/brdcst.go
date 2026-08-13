@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
+	"github.com/benbjohnson/clock"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
@@ -19,6 +21,9 @@ import (
 type PooledBroadcastBehaviour struct {
 	logger *slog.Logger
 	tracer trace.Tracer
+
+	// clk supplies the instant each advance of the pool is applied at.
+	clk clock.Clock
 
 	// performMu is held while Perform is executing to ensure sequential execution of work.
 	performMu sync.Mutex
@@ -46,9 +51,10 @@ type PooledBroadcastBehaviour struct {
 
 var _ Behaviour[BehaviourEvent, BehaviourEvent] = (*PooledBroadcastBehaviour)(nil)
 
-func NewPooledBroadcastBehaviour(brdcstPool *brdcst.Pool[kadt.Key, kadt.PeerID, *pb.Message], logger *slog.Logger, tracer trace.Tracer) *PooledBroadcastBehaviour {
+func NewPooledBroadcastBehaviour(brdcstPool *brdcst.Pool[kadt.Key, kadt.PeerID, *pb.Message], clk clock.Clock, logger *slog.Logger, tracer trace.Tracer) *PooledBroadcastBehaviour {
 	b := &PooledBroadcastBehaviour{
 		pool:      brdcstPool,
+		clk:       clk,
 		notifiers: make(map[coordt.QueryID]*queryNotifier[*EventBroadcastFinished]),
 		ready:     make(chan struct{}, 1),
 		logger:    logger.With("behaviour", "pooledBroadcast"),
@@ -103,7 +109,7 @@ func (b *PooledBroadcastBehaviour) Perform(ctx context.Context) (out BehaviourEv
 	}
 
 	// poll the broadcast pool to trigger any timeouts and other scheduled work
-	ev, ok = b.advancePool(ctx, &brdcst.EventPoolPoll{})
+	ev, ok = b.advancePool(ctx, b.clk.Now(), &brdcst.EventPoolPoll{})
 	if ok {
 		return ev, true
 	}
@@ -274,17 +280,17 @@ func (b *PooledBroadcastBehaviour) perfomNextInbound(ctx context.Context) (Behav
 	}
 
 	// attempt to advance the broadcast pool
-	return b.advancePool(ctx, cmd)
+	return b.advancePool(ctx, b.clk.Now(), cmd)
 }
 
-func (b *PooledBroadcastBehaviour) advancePool(ctx context.Context, ev brdcst.PoolEvent) (out BehaviourEvent, term bool) {
+func (b *PooledBroadcastBehaviour) advancePool(ctx context.Context, now time.Time, ev brdcst.PoolEvent) (out BehaviourEvent, term bool) {
 	ctx, span := b.tracer.Start(ctx, "PooledBroadcastBehaviour.advancePool", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		span.SetAttributes(tele.AttrOutEvent(out))
 		span.End()
 	}()
 
-	pstate := b.pool.Advance(ctx, ev)
+	pstate := b.pool.Advance(ctx, now, ev)
 	switch st := pstate.(type) {
 	case *brdcst.StatePoolIdle:
 		// nothing to do

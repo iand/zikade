@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad/key"
 	"github.com/ipfs/go-libdht/kad/triert"
 	"github.com/stretchr/testify/require"
@@ -20,12 +19,6 @@ func TestProbeConfigValidate(t *testing.T) {
 	t.Run("default is valid", func(t *testing.T) {
 		cfg := DefaultProbeConfig()
 		require.NoError(t, cfg.Validate())
-	})
-
-	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultProbeConfig()
-		cfg.Clock = nil
-		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("tracer is not nil", func(t *testing.T) {
@@ -67,9 +60,8 @@ func TestProbeConfigValidate(t *testing.T) {
 
 func TestProbeStartsIdle(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 
 	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
 	require.NoError(t, err)
@@ -77,16 +69,15 @@ func TestProbeStartsIdle(t *testing.T) {
 	bs, err := NewProbe[tiny.Key, tiny.Node](rt, cfg)
 	require.NoError(t, err)
 
-	state := bs.Advance(ctx, &EventProbePoll{})
+	state := bs.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeIdle{}, state)
 }
 
 func TestProbeAddChecksPresenceInRoutingTable(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 	cfg.CheckInterval = 10 * time.Minute
 
 	// Set concurrency to allow one check to run
@@ -98,25 +89,24 @@ func TestProbeAddChecksPresenceInRoutingTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add node that isn't in routing table
-	state := sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// advance time by one revisit interval
-	clk.Add(cfg.CheckInterval)
+	now = now.Add(cfg.CheckInterval)
 
 	// remains idle since probes aren't run unless node in routing table
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeIdle{}, state)
 }
 
 func TestProbeAddStartsCheckIfCapacity(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 	cfg.CheckInterval = 10 * time.Minute
 
 	// Set concurrency to allow one check to run
@@ -131,18 +121,18 @@ func TestProbeAddStartsCheckIfCapacity(t *testing.T) {
 
 	// after adding first node the probe should be idle since the
 	// connectivity check will be scheduled for the future
-	state := sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// remains idle
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// advance time by one revisit interval
-	clk.Add(cfg.CheckInterval)
-	state = sm.Advance(ctx, &EventProbePoll{})
+	now = now.Add(cfg.CheckInterval)
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// the probe state machine should attempt to contact the next node
@@ -154,10 +144,9 @@ func TestProbeAddStartsCheckIfCapacity(t *testing.T) {
 
 func TestProbeAddManyStartsChecksIfCapacity(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 	cfg.CheckInterval = 10 * time.Minute
 
 	// Set concurrency lower than the number of nodes
@@ -174,30 +163,30 @@ func TestProbeAddManyStartsChecksIfCapacity(t *testing.T) {
 
 	// after adding first node the probe should be idle since the
 	// connectivity check will be scheduled for the future
-	state := sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// after adding second node the probe should still be idle since the
 	// connectivity check will be scheduled for the future
-	state = sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state = sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(3),
 	})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// after adding third node the probe should still be idle since the
 	// connectivity check will be scheduled for the future
-	state = sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state = sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(2),
 	})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// advance time by one revisit interval
-	clk.Add(cfg.CheckInterval)
+	now = now.Add(cfg.CheckInterval)
 
 	// Poll the state machine, it should now attempt to contact a node
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// the connectivity check should be for the right node
@@ -205,7 +194,7 @@ func TestProbeAddManyStartsChecksIfCapacity(t *testing.T) {
 	require.True(t, key.Equal(tiny.Key(4), st.NodeID.Key()))
 
 	// Poll the state machine, it should now attempt to contact another node
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// the connectivity check should be for the right node
@@ -213,16 +202,15 @@ func TestProbeAddManyStartsChecksIfCapacity(t *testing.T) {
 	require.True(t, key.Equal(tiny.Key(2), st.NodeID.Key()))
 
 	// Poll the state machine, it should now be at capacity
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeWaitingAtCapacity{}, state)
 }
 
 func TestProbeAddReportsCapacity(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 	cfg.CheckInterval = 10 * time.Minute
 
 	// Set concurrency to allow more than one check to run
@@ -237,18 +225,18 @@ func TestProbeAddReportsCapacity(t *testing.T) {
 
 	// after adding first node the probe should be idle since the
 	// connectivity check will be scheduled for the future
-	state := sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// remains idle
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// advance time by one revisit interval
-	clk.Add(cfg.CheckInterval)
-	state = sm.Advance(ctx, &EventProbePoll{})
+	now = now.Add(cfg.CheckInterval)
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// the probe state machine should attempt to contact the next node
@@ -257,16 +245,15 @@ func TestProbeAddReportsCapacity(t *testing.T) {
 	// the connectivity check should be for the right node
 	require.True(t, key.Equal(tiny.Key(4), st.NodeID.Key()))
 
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeWaitingWithCapacity{}, state)
 }
 
 func TestProbeRemoveDeletesNodeValue(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 	cfg.CheckInterval = 10 * time.Minute
 
 	// Set concurrency to allow more than one check to run
@@ -281,13 +268,13 @@ func TestProbeRemoveDeletesNodeValue(t *testing.T) {
 
 	// after adding first node the probe should be idle since the
 	// connectivity check will be scheduled for the future
-	state := sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// remove the node
-	state = sm.Advance(ctx, &EventProbeRemove[tiny.Key, tiny.Node]{
+	state = sm.Advance(ctx, now, &EventProbeRemove[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 
@@ -295,10 +282,10 @@ func TestProbeRemoveDeletesNodeValue(t *testing.T) {
 	require.IsType(t, &StateProbeNodeFailure[tiny.Key, tiny.Node]{}, state)
 
 	// advance time by one revisit interval
-	clk.Add(cfg.CheckInterval)
+	now = now.Add(cfg.CheckInterval)
 
 	// state remains idle since there are no nodes to probe
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeIdle{}, state)
 }
 
@@ -306,11 +293,11 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("put new", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now(),
+			NextCheckDue: now,
 		}
 
 		l.Put(nv)
@@ -323,18 +310,18 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("put replace before", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv1 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now(),
+			NextCheckDue: now,
 		}
 
 		l.Put(nv1)
 
 		nv2 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now().Add(-time.Minute),
+			NextCheckDue: now.Add(-time.Minute),
 		}
 		l.Put(nv2)
 
@@ -347,18 +334,18 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("put replace after", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv1 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now(),
+			NextCheckDue: now,
 		}
 
 		l.Put(nv1)
 
 		nv2 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now().Add(time.Minute),
+			NextCheckDue: now.Add(time.Minute),
 		}
 		l.Put(nv2)
 
@@ -371,11 +358,11 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("remove existing", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now(),
+			NextCheckDue: now,
 		}
 
 		l.Put(nv)
@@ -397,11 +384,11 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("remove not-existing", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now(),
+			NextCheckDue: now,
 		}
 
 		l.Put(nv)
@@ -414,9 +401,9 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("next empty list", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
-		got, found := l.PeekNext(clk.Now())
+		got, found := l.PeekNext(now)
 		require.False(t, found)
 		require.Nil(t, got)
 	})
@@ -424,15 +411,15 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("next one entry", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now(),
+			NextCheckDue: now,
 		}
 		l.Put(nv)
 
-		got, found := l.PeekNext(clk.Now())
+		got, found := l.PeekNext(now)
 		require.True(t, found)
 		require.True(t, key.Equal(got.NodeID.Key(), tiny.Key(4)))
 	})
@@ -440,27 +427,27 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("next sorts by next check due", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv1 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(5),
-			NextCheckDue: clk.Now().Add(-time.Minute),
+			NextCheckDue: now.Add(-time.Minute),
 		}
 		l.Put(nv1)
 		nv2 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now().Add(-2 * time.Minute),
+			NextCheckDue: now.Add(-2 * time.Minute),
 		}
 		l.Put(nv2)
 
-		got, found := l.PeekNext(clk.Now())
+		got, found := l.PeekNext(now)
 		require.True(t, found)
 		require.True(t, key.Equal(got.NodeID.Key(), nv2.NodeID.Key()))
 
-		nv2.NextCheckDue = clk.Now()
+		nv2.NextCheckDue = now
 		l.Put(nv2)
 
-		got, found = l.PeekNext(clk.Now())
+		got, found = l.PeekNext(now)
 		require.True(t, found)
 		require.True(t, key.Equal(got.NodeID.Key(), nv1.NodeID.Key()))
 	})
@@ -468,29 +455,29 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("next sorts by cpl descending after time", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv1 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(5),
 			Cpl:          1,
-			NextCheckDue: clk.Now().Add(-time.Minute),
+			NextCheckDue: now.Add(-time.Minute),
 		}
 		l.Put(nv1)
 		nv2 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
 			Cpl:          2,
-			NextCheckDue: clk.Now().Add(-time.Minute),
+			NextCheckDue: now.Add(-time.Minute),
 		}
 		l.Put(nv2)
 
-		got, found := l.PeekNext(clk.Now())
+		got, found := l.PeekNext(now)
 		require.True(t, found)
 		require.True(t, key.Equal(got.NodeID.Key(), nv2.NodeID.Key()))
 
-		nv2.NextCheckDue = clk.Now()
+		nv2.NextCheckDue = now
 		l.Put(nv2)
 
-		got, found = l.PeekNext(clk.Now())
+		got, found = l.PeekNext(now)
 		require.True(t, found)
 		require.True(t, key.Equal(got.NodeID.Key(), nv1.NodeID.Key()))
 	})
@@ -498,20 +485,20 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("next not due", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv1 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(5),
-			NextCheckDue: clk.Now().Add(time.Minute),
+			NextCheckDue: now.Add(time.Minute),
 		}
 		l.Put(nv1)
 		nv2 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now().Add(2 * time.Minute),
+			NextCheckDue: now.Add(2 * time.Minute),
 		}
 		l.Put(nv2)
 
-		got, found := l.PeekNext(clk.Now())
+		got, found := l.PeekNext(now)
 		require.False(t, found)
 		require.Nil(t, got)
 	})
@@ -519,18 +506,18 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("mark ongoing", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv1 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(5),
-			NextCheckDue: clk.Now().Add(time.Minute),
+			NextCheckDue: now.Add(time.Minute),
 		}
 		l.Put(nv1)
 		require.Equal(t, 1, l.pendingCount())
 		require.Equal(t, 0, l.ongoingCount())
 		require.Equal(t, 1, l.nodeCount())
 
-		l.MarkOngoing(nv1.NodeID, clk.Now().Add(time.Minute))
+		l.MarkOngoing(nv1.NodeID, now.Add(time.Minute))
 		require.Equal(t, 0, l.pendingCount())
 		require.Equal(t, 1, l.ongoingCount())
 		require.Equal(t, 1, l.nodeCount())
@@ -539,17 +526,17 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("mark ongoing changes next", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv1 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(5),
-			NextCheckDue: clk.Now().Add(-2 * time.Minute),
+			NextCheckDue: now.Add(-2 * time.Minute),
 		}
 		l.Put(nv1)
 
 		nv2 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now().Add(-1 * time.Minute),
+			NextCheckDue: now.Add(-1 * time.Minute),
 		}
 		l.Put(nv2)
 
@@ -558,17 +545,17 @@ func TestNodeValueList(t *testing.T) {
 		require.Equal(t, 2, l.nodeCount())
 
 		// nv1 is the next node due
-		got, found := l.PeekNext(clk.Now())
+		got, found := l.PeekNext(now)
 		require.True(t, found)
 		require.True(t, key.Equal(got.NodeID.Key(), nv1.NodeID.Key()))
 
-		l.MarkOngoing(nv1.NodeID, clk.Now().Add(time.Minute))
+		l.MarkOngoing(nv1.NodeID, now.Add(time.Minute))
 		require.Equal(t, 1, l.pendingCount())
 		require.Equal(t, 1, l.ongoingCount())
 		require.Equal(t, 2, l.nodeCount())
 
 		// nv2 is now the next node due
-		got, found = l.PeekNext(clk.Now())
+		got, found = l.PeekNext(now)
 		require.True(t, found)
 		require.True(t, key.Equal(got.NodeID.Key(), nv2.NodeID.Key()))
 	})
@@ -576,11 +563,11 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("put removes from ongoing", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv1 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(4),
-			NextCheckDue: clk.Now(),
+			NextCheckDue: now,
 		}
 		l.Put(nv1)
 
@@ -588,7 +575,7 @@ func TestNodeValueList(t *testing.T) {
 		require.Equal(t, 0, l.ongoingCount())
 		require.Equal(t, 1, l.nodeCount())
 
-		l.MarkOngoing(nv1.NodeID, clk.Now().Add(time.Minute))
+		l.MarkOngoing(nv1.NodeID, now.Add(time.Minute))
 
 		require.Equal(t, 0, l.pendingCount())
 		require.Equal(t, 1, l.ongoingCount())
@@ -604,30 +591,29 @@ func TestNodeValueList(t *testing.T) {
 	t.Run("mark ongoing pending mixed", func(t *testing.T) {
 		t.Parallel()
 
-		clk := clock.NewMock()
+		now := epoch
 		l := NewNodeValueList[tiny.Key, tiny.Node]()
 		nv1 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(5),
-			NextCheckDue: clk.Now().Add(time.Minute),
+			NextCheckDue: now.Add(time.Minute),
 		}
 		nv2 := &nodeValue[tiny.Key, tiny.Node]{
 			NodeID:       tiny.NewNode(6),
-			NextCheckDue: clk.Now().Add(time.Minute),
+			NextCheckDue: now.Add(time.Minute),
 		}
 
 		l.Put(nv1)
 		l.Put(nv2)
-		l.MarkOngoing(nv1.NodeID, clk.Now().Add(time.Minute))
+		l.MarkOngoing(nv1.NodeID, now.Add(time.Minute))
 		l.Put(nv1)
 	})
 }
 
 func TestProbeConnectivityCheckSuccess(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 	cfg.CheckInterval = 10 * time.Minute
 
 	// Set concurrency to allow more than one check to run
@@ -642,21 +628,21 @@ func TestProbeConnectivityCheckSuccess(t *testing.T) {
 
 	// after adding first node the probe should be idle since the
 	// connectivity check will be scheduled for the future
-	state := sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// advance time by one revisit interval
-	clk.Add(cfg.CheckInterval)
-	state = sm.Advance(ctx, &EventProbePoll{})
+	now = now.Add(cfg.CheckInterval)
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// the probe state machine should attempt to contact the next node
 	st := state.(*StateProbeConnectivityCheck[tiny.Key, tiny.Node])
 
 	// notify that node was contacted successfully, with no closer nodes
-	state = sm.Advance(ctx, &EventProbeConnectivityCheckSuccess[tiny.Key, tiny.Node]{
+	state = sm.Advance(ctx, now, &EventProbeConnectivityCheckSuccess[tiny.Key, tiny.Node]{
 		NodeID: st.NodeID,
 	})
 
@@ -668,25 +654,24 @@ func TestProbeConnectivityCheckSuccess(t *testing.T) {
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// advance time by another revisit interval
-	clk.Add(cfg.CheckInterval)
+	now = now.Add(cfg.CheckInterval)
 
 	// the probe state machine should attempt to contact node again, now it is time
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// the connectivity check should be for the right node
 	require.True(t, key.Equal(tiny.Key(4), st.NodeID.Key()))
 
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeWaitingWithCapacity{}, state)
 }
 
 func TestProbeConnectivityCheckFailure(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 	cfg.CheckInterval = 10 * time.Minute
 
 	// Set concurrency to allow more than one check to run
@@ -701,21 +686,21 @@ func TestProbeConnectivityCheckFailure(t *testing.T) {
 
 	// after adding first node the probe should be idle since the
 	// connectivity check will be scheduled for the future
-	state := sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// advance time by one revisit interval
-	clk.Add(cfg.CheckInterval)
-	state = sm.Advance(ctx, &EventProbePoll{})
+	now = now.Add(cfg.CheckInterval)
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// the probe state machine should attempt to contact the next node
 	st := state.(*StateProbeConnectivityCheck[tiny.Key, tiny.Node])
 
 	// notify that node was contacted successfully, with no closer nodes
-	state = sm.Advance(ctx, &EventProbeConnectivityCheckFailure[tiny.Key, tiny.Node]{
+	state = sm.Advance(ctx, now, &EventProbeConnectivityCheckFailure[tiny.Key, tiny.Node]{
 		NodeID: st.NodeID,
 	})
 
@@ -731,19 +716,18 @@ func TestProbeConnectivityCheckFailure(t *testing.T) {
 	require.False(t, found)
 
 	// advance time by another revisit interval
-	clk.Add(cfg.CheckInterval)
+	now = now.Add(cfg.CheckInterval)
 
 	// state machine still idle since node was removed
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeIdle{}, state)
 }
 
 func TestProbeNotifyConnectivity(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 	cfg.CheckInterval = 10 * time.Minute
 	cfg.Concurrency = 2
 
@@ -757,7 +741,7 @@ func TestProbeNotifyConnectivity(t *testing.T) {
 
 	// after adding first node the probe should be idle since the
 	// connectivity check will be scheduled for the future (t0+10)
-	state := sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 
@@ -766,11 +750,11 @@ func TestProbeNotifyConnectivity(t *testing.T) {
 
 	// advance time by less than the revisit interval
 	// time is now (t0+2)
-	clk.Add(2 * time.Minute)
+	now = now.Add(2 * time.Minute)
 
 	// add a second node, which will be second in the probe list since it's
 	// time of next check will be later (t0+2+10=t0+12)
-	state = sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state = sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(3),
 	})
 
@@ -779,11 +763,11 @@ func TestProbeNotifyConnectivity(t *testing.T) {
 
 	// advance time past the first node's check time but before the second node's
 	// time is now (t0+2+9=t0+11)
-	clk.Add(9 * time.Minute)
+	now = now.Add(9 * time.Minute)
 
 	// notify that the node with key 4 was connected to successfully by another process
 	// this will delay the time for the next check to t0+11+10=to+21
-	state = sm.Advance(ctx, &EventProbeNotifyConnectivity[tiny.Key, tiny.Node]{
+	state = sm.Advance(ctx, now, &EventProbeNotifyConnectivity[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 
@@ -792,10 +776,10 @@ func TestProbeNotifyConnectivity(t *testing.T) {
 
 	// advance time past second node's check time
 	// time is now (t0+2+9+4=t0+15)
-	clk.Add(4 * time.Minute)
+	now = now.Add(4 * time.Minute)
 
 	// Poll the state machine, it should now attempt to contact a node
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// the connectivity check should be for the right node, which is the one
@@ -804,16 +788,15 @@ func TestProbeNotifyConnectivity(t *testing.T) {
 	require.True(t, key.Equal(tiny.Key(3), st.NodeID.Key()))
 
 	// Poll the state machine, it should now waiting for a response but still have capacity
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeWaitingWithCapacity{}, state)
 }
 
 func TestProbeTimeout(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultProbeConfig()
-	cfg.Clock = clk
 	cfg.CheckInterval = 10 * time.Minute
 	cfg.Timeout = 3 * time.Minute
 	cfg.Concurrency = 1 // one probe at a time, timeouts will be used to free capacity if there are more requests
@@ -827,7 +810,7 @@ func TestProbeTimeout(t *testing.T) {
 	require.NoError(t, err)
 
 	// add a node
-	state := sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(4),
 	})
 
@@ -835,10 +818,10 @@ func TestProbeTimeout(t *testing.T) {
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// advance time a little
-	clk.Add(time.Minute)
+	now = now.Add(time.Minute)
 
 	// add another node
-	state = sm.Advance(ctx, &EventProbeAdd[tiny.Key, tiny.Node]{
+	state = sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(3),
 	})
 
@@ -846,10 +829,10 @@ func TestProbeTimeout(t *testing.T) {
 	require.IsType(t, &StateProbeIdle{}, state)
 
 	// advance time by check interval
-	clk.Add(cfg.CheckInterval)
+	now = now.Add(cfg.CheckInterval)
 
 	// poll state machine
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 
 	// the connectivity check should start
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
@@ -857,14 +840,14 @@ func TestProbeTimeout(t *testing.T) {
 	require.True(t, key.Equal(tiny.Key(4), stm.NodeID.Key()))
 
 	// Poll the state machine, it should now waiting for a response with no capacity
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeWaitingAtCapacity{}, state)
 
 	// advance time past the timeout
-	clk.Add(cfg.Timeout)
+	now = now.Add(cfg.Timeout)
 
 	// state machine announces node failure
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeNodeFailure[tiny.Key, tiny.Node]{}, state)
 	stf := state.(*StateProbeNodeFailure[tiny.Key, tiny.Node])
 
@@ -876,8 +859,12 @@ func TestProbeTimeout(t *testing.T) {
 	require.False(t, found)
 
 	// state machine starts check for next node now there is capacity
-	state = sm.Advance(ctx, &EventProbePoll{})
+	state = sm.Advance(ctx, now, &EventProbePoll{})
 	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 	stm = state.(*StateProbeConnectivityCheck[tiny.Key, tiny.Node])
 	require.True(t, key.Equal(tiny.Key(3), stm.NodeID.Key()))
 }
+
+// epoch is the base instant for tests. State machines take the current time as a
+// parameter, so tests move time by passing a later instant rather than by advancing a clock.
+var epoch = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)

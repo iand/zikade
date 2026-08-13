@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 	"github.com/ipfs/go-libdht/kad/key"
 	"go.opentelemetry.io/otel/trace"
@@ -29,17 +28,10 @@ type QueryConfig struct {
 	NumResults     int           // the minimum number of nodes to successfully contact before considering iteration complete
 	RequestTimeout time.Duration // the timeout for contacting a single node
 	Timeout        time.Duration // the time to wait before the query is considered to have stopped making progress
-	Clock          clock.Clock   // a clock that may replaced by a mock when testing
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *QueryConfig) Validate() error {
-	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
-			Component: "QueryConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
 	if cfg.Concurrency < 1 {
 		return &errs.ConfigurationError{
 			Component: "QueryConfig",
@@ -75,7 +67,6 @@ func DefaultQueryConfig() *QueryConfig {
 		NumResults:     20,
 		RequestTimeout: time.Minute,
 		Timeout:        5 * time.Minute,
-		Clock:          clock.New(), // use standard time
 	}
 }
 
@@ -147,7 +138,7 @@ func NewQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, id coordt
 	}, nil
 }
 
-func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryState) {
+func (q *Query[K, N, M]) Advance(ctx context.Context, now time.Time, ev QueryEvent) (out QueryState) {
 	ctx, span := tele.StartSpan(ctx, "Query.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		span.SetAttributes(tele.AttrOutEvent(out))
@@ -164,7 +155,7 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 
 	switch tev := ev.(type) {
 	case *EventQueryCancel:
-		q.markFinished(ctx)
+		q.markFinished(ctx, now)
 		return &StateQueryFinished[K, N]{
 			QueryID:      q.id,
 			Stats:        q.stats,
@@ -201,7 +192,7 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 	q.iter.Each(ctx, func(ctx context.Context, ni *NodeStatus[K, N]) bool {
 		switch st := ni.State.(type) {
 		case *StateNodeWaiting:
-			if q.cfg.Clock.Now().After(st.Deadline) {
+			if now.After(st.Deadline) {
 				// mark node as unresponsive
 				ni.State = &StateNodeUnresponsive{}
 				q.inFlight--
@@ -223,7 +214,7 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 			// If the iterator is not progressing then it doesn't expect any more nodes to be added to the list.
 			// If it has contacted at least NumResults nodes successfully then the iteration is done.
 			if !progressing && successes >= q.cfg.NumResults {
-				q.markFinished(ctx)
+				q.markFinished(ctx, now)
 				returnState = &StateQueryFinished[K, N]{
 					QueryID:      q.id,
 					Stats:        q.stats,
@@ -234,12 +225,12 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 
 		case *StateNodeNotContacted:
 			if !atCapacity() {
-				deadline := q.cfg.Clock.Now().Add(q.cfg.RequestTimeout)
+				deadline := now.Add(q.cfg.RequestTimeout)
 				ni.State = &StateNodeWaiting{Deadline: deadline}
 				q.inFlight++
 				q.stats.Requests++
 				if q.stats.Start.IsZero() {
-					q.stats.Start = q.cfg.Clock.Now()
+					q.stats.Start = now
 					q.deadline = q.stats.Start.Add(q.cfg.Timeout)
 				}
 
@@ -294,7 +285,7 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 
 	// The iterator is finished because all available nodes have been contacted
 	// and the iterator is not waiting for any more results.
-	q.markFinished(ctx)
+	q.markFinished(ctx, now)
 	return &StateQueryFinished[K, N]{
 		QueryID:      q.id,
 		Stats:        q.stats,
@@ -302,10 +293,10 @@ func (q *Query[K, N, M]) Advance(ctx context.Context, ev QueryEvent) (out QueryS
 	}
 }
 
-func (q *Query[K, N, M]) markFinished(ctx context.Context) {
+func (q *Query[K, N, M]) markFinished(ctx context.Context, now time.Time) {
 	q.finished = true
 	if q.stats.End.IsZero() {
-		q.stats.End = q.cfg.Clock.Now()
+		q.stats.End = now
 	}
 
 	q.targetNodes = make([]N, 0, q.cfg.NumResults)

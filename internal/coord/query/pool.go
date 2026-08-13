@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 
 	"github.com/probe-lab/zikade/errs"
@@ -33,17 +32,10 @@ type PoolConfig struct {
 	Replication      int           // the 'k' parameter defined by Kademlia
 	QueryConcurrency int           // the maximum number of concurrent requests that each query may have in flight
 	RequestTimeout   time.Duration // the timeout queries should use for contacting a single node
-	Clock            clock.Clock   // a clock that may replaced by a mock when testing
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *PoolConfig) Validate() error {
-	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
-			Component: "PoolConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
 	if cfg.Concurrency < 1 {
 		return &errs.ConfigurationError{
 			Component: "PoolConfig",
@@ -84,7 +76,6 @@ func (cfg *PoolConfig) Validate() error {
 // Options may be overridden before passing to NewPool
 func DefaultPoolConfig() *PoolConfig {
 	return &PoolConfig{
-		Clock:            clock.New(), // use standard time
 		Concurrency:      3,
 		Timeout:          5 * time.Minute,
 		Replication:      20,
@@ -109,7 +100,7 @@ func NewPool[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, cfg *PoolC
 }
 
 // Advance advances the state of the pool by attempting to advance one of its queries
-func (p *Pool[K, N, M]) Advance(ctx context.Context, ev PoolEvent) PoolState {
+func (p *Pool[K, N, M]) Advance(ctx context.Context, now time.Time, ev PoolEvent) PoolState {
 	ctx, span := tele.StartSpan(ctx, "Pool.Advance")
 	defer span.End()
 
@@ -128,7 +119,7 @@ func (p *Pool[K, N, M]) Advance(ctx context.Context, ev PoolEvent) PoolState {
 		// TODO: return error as state
 	case *EventPoolStopQuery:
 		if qry, ok := p.queryIndex[tev.QueryID]; ok {
-			state, terminal := p.advanceQuery(ctx, qry, &EventQueryCancel{})
+			state, terminal := p.advanceQuery(ctx, now, qry, &EventQueryCancel{})
 			if terminal {
 				return state
 			}
@@ -136,7 +127,7 @@ func (p *Pool[K, N, M]) Advance(ctx context.Context, ev PoolEvent) PoolState {
 		}
 	case *EventPoolNodeResponse[K, N]:
 		if qry, ok := p.queryIndex[tev.QueryID]; ok {
-			state, terminal := p.advanceQuery(ctx, qry, &EventQueryNodeResponse[K, N]{
+			state, terminal := p.advanceQuery(ctx, now, qry, &EventQueryNodeResponse[K, N]{
 				NodeID:      tev.NodeID,
 				CloserNodes: tev.CloserNodes,
 			})
@@ -147,7 +138,7 @@ func (p *Pool[K, N, M]) Advance(ctx context.Context, ev PoolEvent) PoolState {
 		}
 	case *EventPoolNodeFailure[K, N]:
 		if qry, ok := p.queryIndex[tev.QueryID]; ok {
-			state, terminal := p.advanceQuery(ctx, qry, &EventQueryNodeFailure[K, N]{
+			state, terminal := p.advanceQuery(ctx, now, qry, &EventQueryNodeFailure[K, N]{
 				NodeID: tev.NodeID,
 				Error:  tev.Error,
 			})
@@ -173,7 +164,7 @@ func (p *Pool[K, N, M]) Advance(ctx context.Context, ev PoolEvent) PoolState {
 			continue
 		}
 
-		state, terminal := p.advanceQuery(ctx, qry, &EventQueryPoll{})
+		state, terminal := p.advanceQuery(ctx, now, qry, &EventQueryPoll{})
 		if terminal {
 			return state
 		}
@@ -191,8 +182,8 @@ func (p *Pool[K, N, M]) Advance(ctx context.Context, ev PoolEvent) PoolState {
 	return &StatePoolIdle{}
 }
 
-func (p *Pool[K, N, M]) advanceQuery(ctx context.Context, qry *Query[K, N, M], qev QueryEvent) (PoolState, bool) {
-	state := qry.Advance(ctx, qev)
+func (p *Pool[K, N, M]) advanceQuery(ctx context.Context, now time.Time, qry *Query[K, N, M], qev QueryEvent) (PoolState, bool) {
+	state := qry.Advance(ctx, now, qev)
 	switch st := state.(type) {
 	case *StateQueryFindCloser[K, N]:
 		p.queriesInFlight++
@@ -218,7 +209,7 @@ func (p *Pool[K, N, M]) advanceQuery(ctx context.Context, qry *Query[K, N, M], q
 			ClosestNodes: st.ClosestNodes,
 		}, true
 	case *StateQueryWaitingAtCapacity:
-		if p.cfg.Clock.Now().After(st.Deadline) {
+		if now.After(st.Deadline) {
 			p.removeQuery(qry.id)
 			return &StatePoolQueryTimeout{
 				QueryID: st.QueryID,
@@ -227,7 +218,7 @@ func (p *Pool[K, N, M]) advanceQuery(ctx context.Context, qry *Query[K, N, M], q
 		}
 		p.queriesInFlight++
 	case *StateQueryWaitingWithCapacity:
-		if p.cfg.Clock.Now().After(st.Deadline) {
+		if now.After(st.Deadline) {
 			p.removeQuery(qry.id)
 			return &StatePoolQueryTimeout{
 				QueryID: st.QueryID,
@@ -262,7 +253,6 @@ func (p *Pool[K, N, M]) addQuery(ctx context.Context, queryID coordt.QueryID, ta
 	iter := NewClosestNodesIter[K, N](target)
 
 	qryCfg := DefaultQueryConfig()
-	qryCfg.Clock = p.cfg.Clock
 	qryCfg.Concurrency = p.cfg.QueryConcurrency
 	qryCfg.RequestTimeout = p.cfg.RequestTimeout
 	qryCfg.Timeout = p.cfg.Timeout
@@ -290,7 +280,6 @@ func (p *Pool[K, N, M]) addFindCloserQuery(ctx context.Context, queryID coordt.Q
 	iter := NewClosestNodesIter[K, N](target)
 
 	qryCfg := DefaultQueryConfig()
-	qryCfg.Clock = p.cfg.Clock
 	qryCfg.Concurrency = p.cfg.QueryConcurrency
 	qryCfg.RequestTimeout = p.cfg.RequestTimeout
 	qryCfg.Timeout = p.cfg.Timeout

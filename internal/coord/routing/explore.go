@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -88,9 +87,6 @@ type ExploreSchedule interface {
 
 // ExploreConfig specifies optional configuration for an [Explore]
 type ExploreConfig struct {
-	// Clock is  a clock that may replaced by a mock when testing
-	Clock clock.Clock
-
 	// Tracer is the tracer that should be used to trace execution.
 	Tracer trace.Tracer
 
@@ -106,13 +102,6 @@ type ExploreConfig struct {
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *ExploreConfig) Validate() error {
-	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
-			Component: "ExploreConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
-
 	if cfg.Tracer == nil {
 		return &errs.ConfigurationError{
 			Component: "ExploreConfig",
@@ -155,7 +144,6 @@ func (cfg *ExploreConfig) Validate() error {
 // Options may be overridden before passing to [NewExplore].
 func DefaultExploreConfig() *ExploreConfig {
 	return &ExploreConfig{
-		Clock:  clock.New(), // use standard time
 		Tracer: tele.NoopTracer(),
 		Meter:  tele.NoopMeter(),
 
@@ -227,7 +215,7 @@ func NewExplore[K kad.Key[K], N kad.NodeID[K]](self N, rt RoutingTableCpl[K, N],
 }
 
 // Advance advances the state of the explore by attempting to advance its query if running.
-func (e *Explore[K, N]) Advance(ctx context.Context, ev ExploreEvent) (out ExploreState) {
+func (e *Explore[K, N]) Advance(ctx context.Context, now time.Time, ev ExploreEvent) (out ExploreState) {
 	ctx, span := e.cfg.Tracer.Start(ctx, "Explore.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		e.running.Store(e.qry != nil)
@@ -240,14 +228,14 @@ func (e *Explore[K, N]) Advance(ctx context.Context, ev ExploreEvent) (out Explo
 		// ignore, nothing to do
 	case *EventExploreFindCloserResponse[K, N]:
 		e.counterFindSucceeded.Add(ctx, 1, metric.WithAttributeSet(e.cplAttributeSet.Load().(attribute.Set)))
-		return e.advanceQuery(ctx, &query.EventQueryNodeResponse[K, N]{
+		return e.advanceQuery(ctx, now, &query.EventQueryNodeResponse[K, N]{
 			NodeID:      tev.NodeID,
 			CloserNodes: tev.CloserNodes,
 		})
 	case *EventExploreFindCloserFailure[K, N]:
 		e.counterFindFailed.Add(ctx, 1, metric.WithAttributeSet(e.cplAttributeSet.Load().(attribute.Set)))
 		span.RecordError(tev.Error)
-		return e.advanceQuery(ctx, &query.EventQueryNodeFailure[K, N]{
+		return e.advanceQuery(ctx, now, &query.EventQueryNodeFailure[K, N]{
 			NodeID: tev.NodeID,
 			Error:  tev.Error,
 		})
@@ -257,11 +245,11 @@ func (e *Explore[K, N]) Advance(ctx context.Context, ev ExploreEvent) (out Explo
 
 	// if query is running, give it a chance to advance
 	if e.qry != nil {
-		return e.advanceQuery(ctx, &query.EventQueryPoll{})
+		return e.advanceQuery(ctx, now, &query.EventQueryPoll{})
 	}
 
 	// is an explore due yet?
-	cpl, ok := e.schedule.NextCpl(e.cfg.Clock.Now())
+	cpl, ok := e.schedule.NextCpl(now)
 	if !ok {
 		return &StateExploreIdle{}
 	}
@@ -279,7 +267,6 @@ func (e *Explore[K, N]) Advance(ctx context.Context, ev ExploreEvent) (out Explo
 	iter := query.NewClosestNodesIter[K, N](e.self.Key())
 
 	qryCfg := query.DefaultQueryConfig()
-	qryCfg.Clock = e.cfg.Clock
 	qryCfg.Concurrency = e.cfg.RequestConcurrency
 	qryCfg.RequestTimeout = e.cfg.RequestTimeout
 	qryCfg.Timeout = e.cfg.Timeout
@@ -295,14 +282,14 @@ func (e *Explore[K, N]) Advance(ctx context.Context, ev ExploreEvent) (out Explo
 	e.qryCpl = cpl
 	e.cplAttributeSet.Store(attribute.NewSet(attribute.Int("cpl", cpl)))
 
-	return e.advanceQuery(ctx, &query.EventQueryPoll{})
+	return e.advanceQuery(ctx, now, &query.EventQueryPoll{})
 }
 
-func (e *Explore[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent) ExploreState {
+func (e *Explore[K, N]) advanceQuery(ctx context.Context, now time.Time, qev query.QueryEvent) ExploreState {
 	ctx, span := e.cfg.Tracer.Start(ctx, "Explore.advanceQuery")
 	defer span.End()
 
-	state := e.qry.Advance(ctx, qev)
+	state := e.qry.Advance(ctx, now, qev)
 	switch st := state.(type) {
 	case *query.StateQueryFindCloser[K, N]:
 		e.counterFindSent.Add(ctx, 1, metric.WithAttributeSet(e.cplAttributeSet.Load().(attribute.Set)))
@@ -321,7 +308,7 @@ func (e *Explore[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent) 
 			Stats: st.Stats,
 		}
 	case *query.StateQueryWaitingAtCapacity:
-		if e.cfg.Clock.Now().After(st.Deadline) {
+		if now.After(st.Deadline) {
 			e.counterFindFailed.Add(ctx, 1, metric.WithAttributeSet(e.cplAttributeSet.Load().(attribute.Set)))
 			span.SetAttributes(attribute.String("out_state", "StateExploreTimeout"))
 			e.clearQuery()
@@ -336,7 +323,7 @@ func (e *Explore[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent) 
 			Stats: st.Stats,
 		}
 	case *query.StateQueryWaitingWithCapacity:
-		if e.cfg.Clock.Now().After(st.Deadline) {
+		if now.After(st.Deadline) {
 			e.counterFindFailed.Add(ctx, 1, metric.WithAttributeSet(e.cplAttributeSet.Load().(attribute.Set)))
 			span.SetAttributes(attribute.String("out_state", "StateExploreTimeout"))
 			e.clearQuery()

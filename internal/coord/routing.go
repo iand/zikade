@@ -330,7 +330,6 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 	}
 
 	bootstrapCfg := routing.DefaultBootstrapConfig()
-	bootstrapCfg.Clock = cfg.Clock
 	bootstrapCfg.Tracer = cfg.Tracer
 	bootstrapCfg.Meter = cfg.Meter
 	bootstrapCfg.Timeout = cfg.BootstrapTimeout
@@ -343,7 +342,6 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 	}
 
 	includeCfg := routing.DefaultIncludeConfig()
-	includeCfg.Clock = cfg.Clock
 	includeCfg.Tracer = cfg.Tracer
 	includeCfg.Meter = cfg.Meter
 	includeCfg.Timeout = cfg.ConnectivityCheckTimeout
@@ -356,7 +354,6 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 	}
 
 	probeCfg := routing.DefaultProbeConfig()
-	probeCfg.Clock = cfg.Clock
 	probeCfg.Tracer = cfg.Tracer
 	probeCfg.Meter = cfg.Meter
 	probeCfg.Timeout = cfg.ConnectivityCheckTimeout
@@ -369,7 +366,6 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 	}
 
 	exploreCfg := routing.DefaultExploreConfig()
-	exploreCfg.Clock = cfg.Clock
 	exploreCfg.Tracer = cfg.Tracer
 	exploreCfg.Meter = cfg.Meter
 	exploreCfg.Timeout = cfg.ExploreTimeout
@@ -524,6 +520,9 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 		return nil, false
 	}
 
+	// every state machine advanced for this event sees the same instant
+	now := r.cfg.Clock.Now()
+
 	ctx, span := r.cfg.Tracer.Start(pev.Ctx, "PooledQueryBehaviour.perfomNextInbound")
 	defer span.End()
 
@@ -534,7 +533,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 			KnownClosestNodes: ev.SeedNodes,
 		}
 		// attempt to advance the bootstrap
-		return r.advanceBootstrap(ctx, cmd)
+		return r.advanceBootstrap(ctx, now, cmd)
 
 	case *EventAddNode:
 		span.SetAttributes(attribute.String("event", "EventAddAddrInfo"))
@@ -546,7 +545,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 			NodeID: ev.NodeID,
 		}
 		// attempt to advance the include
-		return r.advanceInclude(ctx, cmd)
+		return r.advanceInclude(ctx, now, cmd)
 
 	case *EventRoutingUpdated:
 		span.SetAttributes(attribute.String("event", "EventRoutingUpdated"), attribute.String("nodeid", ev.NodeID.String()))
@@ -554,7 +553,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 			NodeID: ev.NodeID,
 		}
 		// attempt to advance the probe state machine
-		return r.advanceProbe(ctx, cmd)
+		return r.advanceProbe(ctx, now, cmd)
 
 	case *EventGetCloserNodesSuccess:
 		span.SetAttributes(attribute.String("event", "EventGetCloserNodesSuccess"), attribute.String("queryid", string(ev.QueryID)), attribute.String("nodeid", ev.To.String()))
@@ -571,7 +570,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 				CloserNodes: ev.CloserNodes,
 			}
 			// attempt to advance the bootstrap
-			return r.advanceBootstrap(ctx, cmd)
+			return r.advanceBootstrap(ctx, now, cmd)
 
 		case IncludeQueryID:
 			var cmd routing.IncludeEvent
@@ -587,7 +586,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 				}
 			}
 			// attempt to advance the include
-			return r.advanceInclude(ctx, cmd)
+			return r.advanceInclude(ctx, now, cmd)
 
 		case ProbeQueryID:
 			var cmd routing.ProbeEvent
@@ -603,7 +602,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 				}
 			}
 			// attempt to advance the probe state machine
-			return r.advanceProbe(ctx, cmd)
+			return r.advanceProbe(ctx, now, cmd)
 
 		case routing.ExploreQueryID:
 			for _, info := range ev.CloserNodes {
@@ -615,7 +614,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 				NodeID:      ev.To,
 				CloserNodes: ev.CloserNodes,
 			}
-			return r.advanceExplore(ctx, cmd)
+			return r.advanceExplore(ctx, now, cmd)
 
 		default:
 			panic(fmt.Sprintf("unexpected query id: %s", ev.QueryID))
@@ -630,7 +629,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 				Error:  ev.Err,
 			}
 			// attempt to advance the bootstrap
-			return r.advanceBootstrap(ctx, cmd)
+			return r.advanceBootstrap(ctx, now, cmd)
 
 		case IncludeQueryID:
 			cmd := &routing.EventIncludeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
@@ -638,7 +637,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 				Error:  ev.Err,
 			}
 			// attempt to advance the include state machine
-			return r.advanceInclude(ctx, cmd)
+			return r.advanceInclude(ctx, now, cmd)
 
 		case ProbeQueryID:
 			cmd := &routing.EventProbeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
@@ -646,7 +645,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 				Error:  ev.Err,
 			}
 			// attempt to advance the probe state machine
-			return r.advanceProbe(ctx, cmd)
+			return r.advanceProbe(ctx, now, cmd)
 
 		case routing.ExploreQueryID:
 			cmd := &routing.EventExploreFindCloserFailure[kadt.Key, kadt.PeerID]{
@@ -654,7 +653,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 				Error:  ev.Err,
 			}
 			// attempt to advance the explore
-			return r.advanceExplore(ctx, cmd)
+			return r.advanceExplore(ctx, now, cmd)
 
 		default:
 			panic(fmt.Sprintf("unexpected query id: %s", ev.QueryID))
@@ -671,7 +670,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 		cmd := &routing.EventIncludeAddCandidate[kadt.Key, kadt.PeerID]{
 			NodeID: ev.NodeID,
 		}
-		next, ok := r.advanceInclude(ctx, cmd)
+		next, ok := r.advanceInclude(ctx, now, cmd)
 		if ok {
 			r.pendingOutbound = append(r.pendingOutbound, next)
 		}
@@ -680,7 +679,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 		cmdProbe := &routing.EventProbeNotifyConnectivity[kadt.Key, kadt.PeerID]{
 			NodeID: ev.NodeID,
 		}
-		return r.advanceProbe(ctx, cmdProbe)
+		return r.advanceProbe(ctx, now, cmdProbe)
 	case *EventNotifyNonConnectivity:
 		span.SetAttributes(attribute.String("event", "EventNotifyConnectivity"), attribute.String("nodeid", ev.NodeID.String()))
 
@@ -688,7 +687,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 		cmdProbe := &routing.EventProbeRemove[kadt.Key, kadt.PeerID]{
 			NodeID: ev.NodeID,
 		}
-		return r.advanceProbe(ctx, cmdProbe)
+		return r.advanceProbe(ctx, now, cmdProbe)
 	case *EventRoutingPoll:
 		r.pollChildren(ctx)
 
@@ -701,31 +700,34 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 
 // pollChildren must only be called while r.pendingMu is locked
 func (r *RoutingBehaviour) pollChildren(ctx context.Context) {
-	ev, ok := r.advanceBootstrap(ctx, &routing.EventBootstrapPoll{})
+	// every state machine advanced for this poll sees the same instant
+	now := r.cfg.Clock.Now()
+
+	ev, ok := r.advanceBootstrap(ctx, now, &routing.EventBootstrapPoll{})
 	if ok {
 		r.pendingOutbound = append(r.pendingOutbound, ev)
 	}
 
-	ev, ok = r.advanceInclude(ctx, &routing.EventIncludePoll{})
+	ev, ok = r.advanceInclude(ctx, now, &routing.EventIncludePoll{})
 	if ok {
 		r.pendingOutbound = append(r.pendingOutbound, ev)
 	}
 
-	ev, ok = r.advanceProbe(ctx, &routing.EventProbePoll{})
+	ev, ok = r.advanceProbe(ctx, now, &routing.EventProbePoll{})
 	if ok {
 		r.pendingOutbound = append(r.pendingOutbound, ev)
 	}
 
-	ev, ok = r.advanceExplore(ctx, &routing.EventExplorePoll{})
+	ev, ok = r.advanceExplore(ctx, now, &routing.EventExplorePoll{})
 	if ok {
 		r.pendingOutbound = append(r.pendingOutbound, ev)
 	}
 }
 
-func (r *RoutingBehaviour) advanceBootstrap(ctx context.Context, ev routing.BootstrapEvent) (BehaviourEvent, bool) {
+func (r *RoutingBehaviour) advanceBootstrap(ctx context.Context, now time.Time, ev routing.BootstrapEvent) (BehaviourEvent, bool) {
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.advanceBootstrap")
 	defer span.End()
-	bstate := r.bootstrap.Advance(ctx, ev)
+	bstate := r.bootstrap.Advance(ctx, now, ev)
 	switch st := bstate.(type) {
 
 	case *routing.StateBootstrapFindCloser[kadt.Key, kadt.PeerID]:
@@ -752,11 +754,11 @@ func (r *RoutingBehaviour) advanceBootstrap(ctx context.Context, ev routing.Boot
 	return nil, false
 }
 
-func (r *RoutingBehaviour) advanceInclude(ctx context.Context, ev routing.IncludeEvent) (BehaviourEvent, bool) {
+func (r *RoutingBehaviour) advanceInclude(ctx context.Context, now time.Time, ev routing.IncludeEvent) (BehaviourEvent, bool) {
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.advanceInclude")
 	defer span.End()
 
-	istate := r.include.Advance(ctx, ev)
+	istate := r.include.Advance(ctx, now, ev)
 	switch st := istate.(type) {
 	case *routing.StateIncludeConnectivityCheck[kadt.Key, kadt.PeerID]:
 		span.SetAttributes(attribute.String("out_event", "EventOutboundGetCloserNodes"))
@@ -798,10 +800,10 @@ func (r *RoutingBehaviour) advanceInclude(ctx context.Context, ev routing.Includ
 	return nil, false
 }
 
-func (r *RoutingBehaviour) advanceProbe(ctx context.Context, ev routing.ProbeEvent) (BehaviourEvent, bool) {
+func (r *RoutingBehaviour) advanceProbe(ctx context.Context, now time.Time, ev routing.ProbeEvent) (BehaviourEvent, bool) {
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.advanceProbe")
 	defer span.End()
-	st := r.probe.Advance(ctx, ev)
+	st := r.probe.Advance(ctx, now, ev)
 	switch st := st.(type) {
 	case *routing.StateProbeConnectivityCheck[kadt.Key, kadt.PeerID]:
 		// include wants to send a find node message to a node
@@ -842,10 +844,10 @@ func (r *RoutingBehaviour) advanceProbe(ctx context.Context, ev routing.ProbeEve
 	return nil, false
 }
 
-func (r *RoutingBehaviour) advanceExplore(ctx context.Context, ev routing.ExploreEvent) (BehaviourEvent, bool) {
+func (r *RoutingBehaviour) advanceExplore(ctx context.Context, now time.Time, ev routing.ExploreEvent) (BehaviourEvent, bool) {
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.advanceExplore")
 	defer span.End()
-	bstate := r.explore.Advance(ctx, ev)
+	bstate := r.explore.Advance(ctx, now, ev)
 	switch st := bstate.(type) {
 
 	case *routing.StateExploreFindCloser[kadt.Key, kadt.PeerID]:

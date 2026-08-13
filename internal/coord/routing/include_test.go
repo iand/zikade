@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad/key"
 	"github.com/ipfs/go-libdht/kad/triert"
 	"github.com/stretchr/testify/require"
@@ -16,12 +15,6 @@ func TestIncludeConfigValidate(t *testing.T) {
 	t.Run("default is valid", func(t *testing.T) {
 		cfg := DefaultIncludeConfig()
 		require.NoError(t, cfg.Validate())
-	})
-
-	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultIncludeConfig()
-		cfg.Clock = nil
-		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("tracer is not nil", func(t *testing.T) {
@@ -63,9 +56,8 @@ func TestIncludeConfigValidate(t *testing.T) {
 
 func TestIncludeStartsIdle(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultIncludeConfig()
-	cfg.Clock = clk
 
 	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
 	require.NoError(t, err)
@@ -73,15 +65,14 @@ func TestIncludeStartsIdle(t *testing.T) {
 	bs, err := NewInclude[tiny.Key, tiny.Node](rt, cfg)
 	require.NoError(t, err)
 
-	state := bs.Advance(ctx, &EventIncludePoll{})
+	state := bs.Advance(ctx, now, &EventIncludePoll{})
 	require.IsType(t, &StateIncludeIdle{}, state)
 }
 
 func TestIncludeAddCandidateStartsCheckIfCapacity(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultIncludeConfig()
-	cfg.Clock = clk
 	cfg.Concurrency = 1
 
 	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
@@ -93,7 +84,7 @@ func TestIncludeAddCandidateStartsCheckIfCapacity(t *testing.T) {
 	candidate := tiny.NewNode(0b00000100)
 
 	// add a candidate
-	state := p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state := p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: candidate,
 	})
 	// the state machine should attempt to send a message
@@ -108,15 +99,14 @@ func TestIncludeAddCandidateStartsCheckIfCapacity(t *testing.T) {
 	require.Equal(t, candidate, st.NodeID)
 
 	// now the include reports that it is waiting since concurrency is 1
-	state = p.Advance(ctx, &EventIncludePoll{})
+	state = p.Advance(ctx, now, &EventIncludePoll{})
 	require.IsType(t, &StateIncludeWaitingAtCapacity{}, state)
 }
 
 func TestIncludeAddCandidateReportsCapacity(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultIncludeConfig()
-	cfg.Clock = clk
 	cfg.Concurrency = 2
 
 	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
@@ -127,22 +117,21 @@ func TestIncludeAddCandidateReportsCapacity(t *testing.T) {
 	candidate := tiny.NewNode(0b00000100)
 
 	// add a candidate
-	state := p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state := p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: candidate,
 	})
 	require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// now the state machine reports that it is waiting with capacity since concurrency
 	// is greater than the number of checks in flight
-	state = p.Advance(ctx, &EventIncludePoll{})
+	state = p.Advance(ctx, now, &EventIncludePoll{})
 	require.IsType(t, &StateIncludeWaitingWithCapacity{}, state)
 }
 
 func TestIncludeAddCandidateOverQueueLength(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultIncludeConfig()
-	cfg.Clock = clk
 	cfg.QueueCapacity = 2 // only allow two candidates in the queue
 	cfg.Concurrency = 3
 
@@ -153,40 +142,40 @@ func TestIncludeAddCandidateOverQueueLength(t *testing.T) {
 	require.NoError(t, err)
 
 	// add a candidate
-	state := p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state := p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000100),
 	})
 	require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// include reports that it is waiting and has capacity for more
-	state = p.Advance(ctx, &EventIncludePoll{})
+	state = p.Advance(ctx, now, &EventIncludePoll{})
 	require.IsType(t, &StateIncludeWaitingWithCapacity{}, state)
 
 	// add second candidate
-	state = p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000010),
 	})
 	// sends a message to the candidate
 	require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// include reports that it is waiting and has capacity for more
-	state = p.Advance(ctx, &EventIncludePoll{})
+	state = p.Advance(ctx, now, &EventIncludePoll{})
 	// sends a message to the candidate
 	require.IsType(t, &StateIncludeWaitingWithCapacity{}, state)
 
 	// add third candidate
-	state = p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000011),
 	})
 	// sends a message to the candidate
 	require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// include reports that it is waiting at capacity since 3 messages are in flight
-	state = p.Advance(ctx, &EventIncludePoll{})
+	state = p.Advance(ctx, now, &EventIncludePoll{})
 	require.IsType(t, &StateIncludeWaitingAtCapacity{}, state)
 
 	// add fourth candidate
-	state = p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000101),
 	})
 
@@ -194,7 +183,7 @@ func TestIncludeAddCandidateOverQueueLength(t *testing.T) {
 	require.IsType(t, &StateIncludeWaitingAtCapacity{}, state)
 
 	// add fifth candidate
-	state = p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000110),
 	})
 
@@ -203,7 +192,7 @@ func TestIncludeAddCandidateOverQueueLength(t *testing.T) {
 	require.IsType(t, &StateIncludeWaitingFull{}, state)
 
 	// add sixth candidate
-	state = p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000111),
 	})
 
@@ -214,9 +203,8 @@ func TestIncludeAddCandidateOverQueueLength(t *testing.T) {
 
 func TestIncludeConnectivityCheckSuccess(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultIncludeConfig()
-	cfg.Clock = clk
 	cfg.Concurrency = 2
 
 	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
@@ -226,13 +214,13 @@ func TestIncludeConnectivityCheckSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	// add a candidate
-	state := p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state := p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000100),
 	})
 	require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// notify that node was contacted successfully, with no closer nodes
-	state = p.Advance(ctx, &EventIncludeConnectivityCheckSuccess[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventIncludeConnectivityCheckSuccess[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000100),
 	})
 
@@ -252,15 +240,14 @@ func TestIncludeConnectivityCheckSuccess(t *testing.T) {
 	require.True(t, key.Equal(foundNode.Key(), tiny.Key(4)))
 
 	// advancing again should reports that it is idle
-	state = p.Advance(ctx, &EventIncludePoll{})
+	state = p.Advance(ctx, now, &EventIncludePoll{})
 	require.IsType(t, &StateIncludeIdle{}, state)
 }
 
 func TestIncludeConnectivityCheckFailure(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultIncludeConfig()
-	cfg.Clock = clk
 	cfg.Concurrency = 2
 
 	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
@@ -270,13 +257,13 @@ func TestIncludeConnectivityCheckFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	// add a candidate
-	state := p.Advance(ctx, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
+	state := p.Advance(ctx, now, &EventIncludeAddCandidate[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000100),
 	})
 	require.IsType(t, &StateIncludeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
 
 	// notify that node was not contacted successfully
-	state = p.Advance(ctx, &EventIncludeConnectivityCheckFailure[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventIncludeConnectivityCheckFailure[tiny.Key, tiny.Node]{
 		NodeID: tiny.NewNode(0b00000100),
 	})
 

@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 	"github.com/ipfs/go-libdht/kad/key"
 	"go.opentelemetry.io/otel/attribute"
@@ -89,7 +88,6 @@ type ProbeConfig struct {
 	CheckInterval time.Duration // the minimum time interval between checks for a node
 	Concurrency   int           // the maximum number of probe checks that may be in progress at any one time
 	Timeout       time.Duration // the time to wait before terminating a check that is not making progress
-	Clock         clock.Clock   // a clock that may be replaced by a mock when testing
 
 	// Tracer is the tracer that should be used to trace execution.
 	Tracer trace.Tracer
@@ -100,13 +98,6 @@ type ProbeConfig struct {
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *ProbeConfig) Validate() error {
-	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
-			Component: "ProbeConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
-
 	if cfg.Tracer == nil {
 		return &errs.ConfigurationError{
 			Component: "ProbeConfig",
@@ -149,7 +140,6 @@ func (cfg *ProbeConfig) Validate() error {
 // Options may be overridden before passing to NewProbe
 func DefaultProbeConfig() *ProbeConfig {
 	return &ProbeConfig{
-		Clock:  clock.New(), // use standard time
 		Tracer: tele.NoopTracer(),
 		Meter:  tele.NoopMeter(),
 
@@ -214,7 +204,7 @@ func NewProbe[K kad.Key[K], N kad.NodeID[K]](rt RoutingTableCpl[K, N], cfg *Prob
 }
 
 // Advance advances the state of the probe state machine by attempting to advance its query if running.
-func (p *Probe[K, N]) Advance(ctx context.Context, ev ProbeEvent) (out ProbeState) {
+func (p *Probe[K, N]) Advance(ctx context.Context, now time.Time, ev ProbeEvent) (out ProbeState) {
 	_, span := p.cfg.Tracer.Start(ctx, "Probe.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		// update the pending count so gauge can read it asynchronously
@@ -238,7 +228,7 @@ func (p *Probe[K, N]) Advance(ctx context.Context, ev ProbeEvent) (out ProbeStat
 		// add a node to the value list
 		nv := &nodeValue[K, N]{
 			NodeID:       tev.NodeID,
-			NextCheckDue: p.cfg.Clock.Now().Add(p.cfg.CheckInterval),
+			NextCheckDue: now.Add(p.cfg.CheckInterval),
 			Cpl:          p.rt.Cpl(tev.NodeID.Key()),
 		}
 		// TODO: if node was in ongoing list return a state that can signal the caller to cancel any prior outbound message
@@ -262,7 +252,7 @@ func (p *Probe[K, N]) Advance(ctx context.Context, ev ProbeEvent) (out ProbeStat
 			break
 		}
 		// update next check time
-		nv.NextCheckDue = p.cfg.Clock.Now().Add(p.cfg.CheckInterval)
+		nv.NextCheckDue = now.Add(p.cfg.CheckInterval)
 
 		// put into list, which will clear any ongoing check too
 		p.nvl.Put(nv)
@@ -286,7 +276,7 @@ func (p *Probe[K, N]) Advance(ctx context.Context, ev ProbeEvent) (out ProbeStat
 			break
 		}
 		// update next check time
-		nv.NextCheckDue = p.cfg.Clock.Now().Add(p.cfg.CheckInterval)
+		nv.NextCheckDue = now.Add(p.cfg.CheckInterval)
 
 		// put into list, which will clear any ongoing check too
 		p.nvl.Put(nv)
@@ -298,7 +288,7 @@ func (p *Probe[K, N]) Advance(ctx context.Context, ev ProbeEvent) (out ProbeStat
 	// Check if there is capacity
 	if p.cfg.Concurrency <= p.nvl.ongoingCount() {
 		// see if a check can be timed out to free capacity
-		candidate, found := p.nvl.FindCheckPastDeadline(p.cfg.Clock.Now())
+		candidate, found := p.nvl.FindCheckPastDeadline(now)
 		if !found {
 			// nothing suitable for time out
 			return &StateProbeWaitingAtCapacity{}
@@ -314,7 +304,7 @@ func (p *Probe[K, N]) Advance(ctx context.Context, ev ProbeEvent) (out ProbeStat
 	}
 
 	// there is capacity to start a new check
-	next, ok := p.nvl.PeekNext(p.cfg.Clock.Now())
+	next, ok := p.nvl.PeekNext(now)
 	if !ok {
 		if p.nvl.ongoingCount() > 0 {
 			// waiting for a check but nothing else to do
@@ -324,7 +314,7 @@ func (p *Probe[K, N]) Advance(ctx context.Context, ev ProbeEvent) (out ProbeStat
 		return &StateProbeIdle{}
 	}
 
-	p.nvl.MarkOngoing(next.NodeID, p.cfg.Clock.Now().Add(p.cfg.Timeout))
+	p.nvl.MarkOngoing(next.NodeID, now.Add(p.cfg.Timeout))
 
 	// Ask the node to find itself
 	p.counterChecksSent.Add(ctx, 1)

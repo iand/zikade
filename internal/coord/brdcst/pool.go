@@ -3,6 +3,7 @@ package brdcst
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ipfs/go-libdht/kad"
 	"go.opentelemetry.io/otel/trace"
@@ -74,7 +75,7 @@ func NewPool[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, cfg *Confi
 // state machine. If either the state machine wasn't found (shouldn't happen) or
 // there's no corresponding broadcast event ([EventPoolPoll] for example) don't
 // do anything and instead try to advance the other broadcast state machines.
-func (p *Pool[K, N, M]) Advance(ctx context.Context, ev PoolEvent) (out PoolState) {
+func (p *Pool[K, N, M]) Advance(ctx context.Context, now time.Time, ev PoolEvent) (out PoolState) {
 	ctx, span := tele.StartSpan(ctx, "Pool.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		span.SetAttributes(tele.AttrOutEvent(out))
@@ -83,7 +84,7 @@ func (p *Pool[K, N, M]) Advance(ctx context.Context, ev PoolEvent) (out PoolStat
 
 	sm, bev := p.handleEvent(ctx, ev)
 	if sm != nil && bev != nil {
-		if state, terminal := p.advanceBroadcast(ctx, sm, bev); terminal {
+		if state, terminal := p.advanceBroadcast(ctx, now, sm, bev); terminal {
 			return state
 		}
 	}
@@ -94,7 +95,7 @@ func (p *Pool[K, N, M]) Advance(ctx context.Context, ev PoolEvent) (out PoolStat
 			continue
 		}
 
-		state, terminal := p.advanceBroadcast(ctx, bsm, &EventBroadcastPoll{})
+		state, terminal := p.advanceBroadcast(ctx, now, bsm, &EventBroadcastPoll{})
 		if terminal {
 			return state
 		}
@@ -175,11 +176,11 @@ func (p *Pool[K, N, M]) handleEvent(ctx context.Context, ev PoolEvent) (sm Broad
 // advanceBroadcast advances the given broadcast state machine ([FollowUp] or
 // [Static]) and returns the new [Pool] state ([PoolState]). The additional
 // boolean value indicates whether the returned [PoolState] should be ignored.
-func (p *Pool[K, N, M]) advanceBroadcast(ctx context.Context, sm Broadcast, bev BroadcastEvent) (PoolState, bool) {
+func (p *Pool[K, N, M]) advanceBroadcast(ctx context.Context, now time.Time, sm Broadcast, bev BroadcastEvent) (PoolState, bool) {
 	ctx, span := tele.StartSpan(ctx, "Pool.advanceBroadcast", trace.WithAttributes(tele.AttrInEvent(bev)))
 	defer span.End()
 
-	state := sm.Advance(ctx, bev)
+	state := sm.Advance(ctx, now, bev)
 	switch st := state.(type) {
 	case *StateBroadcastFindCloser[K, N]:
 		return &StatePoolFindCloser[K, N]{

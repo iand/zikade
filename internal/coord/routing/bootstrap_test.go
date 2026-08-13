@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad/key"
 	"github.com/stretchr/testify/require"
 
@@ -17,12 +16,6 @@ func TestBootstrapConfigValidate(t *testing.T) {
 	t.Run("default is valid", func(t *testing.T) {
 		cfg := DefaultBootstrapConfig()
 		require.NoError(t, cfg.Validate())
-	})
-
-	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultBootstrapConfig()
-		cfg.Clock = nil
-		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("tracer is not nil", func(t *testing.T) {
@@ -64,23 +57,21 @@ func TestBootstrapConfigValidate(t *testing.T) {
 
 func TestBootstrapStartsIdle(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultBootstrapConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	bs, err := NewBootstrap[tiny.Key](self, cfg)
 	require.NoError(t, err)
 
-	state := bs.Advance(ctx, &EventBootstrapPoll{})
+	state := bs.Advance(ctx, now, &EventBootstrapPoll{})
 	require.IsType(t, &StateBootstrapIdle{}, state)
 }
 
 func TestBootstrapStart(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultBootstrapConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	bs, err := NewBootstrap[tiny.Key](self, cfg)
@@ -89,7 +80,7 @@ func TestBootstrapStart(t *testing.T) {
 	a := tiny.NewNode(0b00000100) // 4
 
 	// start the bootstrap
-	state := bs.Advance(ctx, &EventBootstrapStart[tiny.Key, tiny.Node]{
+	state := bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
 		KnownClosestNodes: []tiny.Node{a},
 	})
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
@@ -107,15 +98,14 @@ func TestBootstrapStart(t *testing.T) {
 	require.True(t, key.Equal(self.Key(), st.Target))
 
 	// now the bootstrap reports that it is waiting
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 	require.IsType(t, &StateBootstrapWaiting{}, state)
 }
 
 func TestBootstrapMessageResponse(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultBootstrapConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	bs, err := NewBootstrap[tiny.Key](self, cfg)
@@ -124,7 +114,7 @@ func TestBootstrapMessageResponse(t *testing.T) {
 	a := tiny.NewNode(0b00000100) // 4
 
 	// start the bootstrap
-	state := bs.Advance(ctx, &EventBootstrapStart[tiny.Key, tiny.Node]{
+	state := bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
 		KnownClosestNodes: []tiny.Node{a},
 	})
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
@@ -135,7 +125,7 @@ func TestBootstrapMessageResponse(t *testing.T) {
 	require.Equal(t, a, st.NodeID)
 
 	// notify bootstrap that node was contacted successfully, but no closer nodes
-	state = bs.Advance(ctx, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: a,
 	})
 
@@ -149,9 +139,8 @@ func TestBootstrapMessageResponse(t *testing.T) {
 
 func TestBootstrapProgress(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultBootstrapConfig()
-	cfg.Clock = clk
 	cfg.RequestConcurrency = 3 // 1 less than the 4 nodes to be visited
 
 	self := tiny.NewNode(0)
@@ -169,7 +158,7 @@ func TestBootstrapProgress(t *testing.T) {
 	require.True(t, self.Key().Xor(c.Key()).Compare(self.Key().Xor(d.Key())) == -1)
 
 	// start the bootstrap
-	state := bs.Advance(ctx, &EventBootstrapStart[tiny.Key, tiny.Node]{
+	state := bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
 		KnownClosestNodes: []tiny.Node{d, a, b, c},
 	})
 
@@ -180,23 +169,23 @@ func TestBootstrapProgress(t *testing.T) {
 	require.Equal(t, a, st.NodeID)
 
 	// next the bootstrap attempts to contact second nearest node
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
 	st = state.(*StateBootstrapFindCloser[tiny.Key, tiny.Node])
 	require.Equal(t, b, st.NodeID)
 
 	// next the bootstrap attempts to contact third nearest node
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
 	st = state.(*StateBootstrapFindCloser[tiny.Key, tiny.Node])
 	require.Equal(t, c, st.NodeID)
 
 	// now the bootstrap should be waiting since it is at request capacity
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 	require.IsType(t, &StateBootstrapWaiting{}, state)
 
 	// notify bootstrap that node was contacted successfully, but no closer nodes
-	state = bs.Advance(ctx, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: a,
 	})
 
@@ -206,7 +195,7 @@ func TestBootstrapProgress(t *testing.T) {
 	require.Equal(t, d, st.NodeID)
 
 	// notify bootstrap that a node was contacted successfully
-	state = bs.Advance(ctx, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: b,
 	})
 
@@ -214,7 +203,7 @@ func TestBootstrapProgress(t *testing.T) {
 	require.IsType(t, &StateBootstrapWaiting{}, state)
 
 	// notify bootstrap that a node was contacted successfully
-	state = bs.Advance(ctx, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: c,
 	})
 
@@ -222,7 +211,7 @@ func TestBootstrapProgress(t *testing.T) {
 	require.IsType(t, &StateBootstrapWaiting{}, state)
 
 	// notify bootstrap that the final node was contacted successfully
-	state = bs.Advance(ctx, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: d,
 	})
 
@@ -236,9 +225,8 @@ func TestBootstrapProgress(t *testing.T) {
 
 func TestBootstrapFinishesThenGoesIdle(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultBootstrapConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	bs, err := NewBootstrap[tiny.Key](self, cfg)
@@ -247,7 +235,7 @@ func TestBootstrapFinishesThenGoesIdle(t *testing.T) {
 	a := tiny.NewNode(0b00000100) // 4
 
 	// start the bootstrap
-	state := bs.Advance(ctx, &EventBootstrapStart[tiny.Key, tiny.Node]{
+	state := bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
 		KnownClosestNodes: []tiny.Node{a},
 	})
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
@@ -258,7 +246,7 @@ func TestBootstrapFinishesThenGoesIdle(t *testing.T) {
 	require.Equal(t, a, st.NodeID)
 
 	// notify bootstrap that node was contacted successfully, but no closer nodes
-	state = bs.Advance(ctx, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: a,
 	})
 
@@ -266,7 +254,7 @@ func TestBootstrapFinishesThenGoesIdle(t *testing.T) {
 	require.IsType(t, &StateBootstrapFinished{}, state)
 
 	// poll bootstrap
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 
 	// bootstrap should now be idle
 	require.IsType(t, &StateBootstrapIdle{}, state)
@@ -274,9 +262,8 @@ func TestBootstrapFinishesThenGoesIdle(t *testing.T) {
 
 func TestBootstrapFinishedIgnoresLaterResponses(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultBootstrapConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	bs, err := NewBootstrap[tiny.Key](self, cfg)
@@ -286,7 +273,7 @@ func TestBootstrapFinishedIgnoresLaterResponses(t *testing.T) {
 	b := tiny.NewNode(8)
 
 	// start the bootstrap
-	state := bs.Advance(ctx, &EventBootstrapStart[tiny.Key, tiny.Node]{
+	state := bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
 		KnownClosestNodes: []tiny.Node{b},
 	})
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
@@ -297,7 +284,7 @@ func TestBootstrapFinishedIgnoresLaterResponses(t *testing.T) {
 	require.Equal(t, b, st.NodeID)
 
 	// notify bootstrap that node was contacted successfully with a closer node
-	state = bs.Advance(ctx, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID:      b,
 		CloserNodes: []tiny.Node{a},
 	})
@@ -306,22 +293,22 @@ func TestBootstrapFinishedIgnoresLaterResponses(t *testing.T) {
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
 
 	// poll bootstrap
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 
 	// bootstrap should now be waiting
 	require.IsType(t, &StateBootstrapWaiting{}, state)
 
 	// advance the clock past the timeout
-	clk.Add(cfg.RequestTimeout * 2)
+	now = now.Add(cfg.RequestTimeout * 2)
 
 	// poll bootstrap
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 
 	// bootstrap should now be finished
 	require.IsType(t, &StateBootstrapFinished{}, state)
 
 	// notify bootstrap that node was contacted successfully after the timeout
-	state = bs.Advance(ctx, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: a,
 	})
 
@@ -331,9 +318,8 @@ func TestBootstrapFinishedIgnoresLaterResponses(t *testing.T) {
 
 func TestBootstrapFinishedIgnoresLaterFailures(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultBootstrapConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	bs, err := NewBootstrap[tiny.Key](self, cfg)
@@ -343,7 +329,7 @@ func TestBootstrapFinishedIgnoresLaterFailures(t *testing.T) {
 	b := tiny.NewNode(8)
 
 	// start the bootstrap
-	state := bs.Advance(ctx, &EventBootstrapStart[tiny.Key, tiny.Node]{
+	state := bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
 		KnownClosestNodes: []tiny.Node{b},
 	})
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
@@ -354,7 +340,7 @@ func TestBootstrapFinishedIgnoresLaterFailures(t *testing.T) {
 	require.Equal(t, b, st.NodeID)
 
 	// notify bootstrap that node was contacted successfully with a closer node
-	state = bs.Advance(ctx, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID:      b,
 		CloserNodes: []tiny.Node{a},
 	})
@@ -363,22 +349,22 @@ func TestBootstrapFinishedIgnoresLaterFailures(t *testing.T) {
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
 
 	// poll bootstrap
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 
 	// bootstrap should now be waiting
 	require.IsType(t, &StateBootstrapWaiting{}, state)
 
 	// advance the clock past the timeout
-	clk.Add(cfg.RequestTimeout * 2)
+	now = now.Add(cfg.RequestTimeout * 2)
 
 	// poll bootstrap
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 
 	// bootstrap should now be finished
 	require.IsType(t, &StateBootstrapFinished{}, state)
 
 	// notify bootstrap that node failed to be contacted
-	state = bs.Advance(ctx, &EventBootstrapFindCloserFailure[tiny.Key, tiny.Node]{
+	state = bs.Advance(ctx, now, &EventBootstrapFindCloserFailure[tiny.Key, tiny.Node]{
 		NodeID: a,
 	})
 
@@ -388,9 +374,8 @@ func TestBootstrapFinishedIgnoresLaterFailures(t *testing.T) {
 
 func TestBootstrapTimeout(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultBootstrapConfig()
-	cfg.Clock = clk
 	cfg.Timeout = 3 * time.Minute
 
 	// the request must outlive the bootstrap so its query is still waiting for a
@@ -403,18 +388,18 @@ func TestBootstrapTimeout(t *testing.T) {
 
 	a := tiny.NewNode(0b00000100) // 4
 
-	state := bs.Advance(ctx, &EventBootstrapStart[tiny.Key, tiny.Node]{
+	state := bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
 		KnownClosestNodes: []tiny.Node{a},
 	})
 	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
 
 	// the node never responds, but the bootstrap has not run out of time yet
-	clk.Add(cfg.Timeout - time.Second)
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	now = now.Add(cfg.Timeout - time.Second)
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 	require.IsType(t, &StateBootstrapWaiting{}, state)
 
 	// once the deadline passes the bootstrap gives up
-	clk.Add(2 * time.Second)
-	state = bs.Advance(ctx, &EventBootstrapPoll{})
+	now = now.Add(2 * time.Second)
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
 	require.IsType(t, &StateBootstrapTimeout{}, state)
 }

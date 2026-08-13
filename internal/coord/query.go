@@ -147,7 +147,6 @@ func NewQueryBehaviour(self kadt.PeerID, cfg *QueryConfig) (*QueryBehaviour, err
 	}
 
 	qpCfg := query.DefaultPoolConfig()
-	qpCfg.Clock = cfg.Clock
 	qpCfg.Concurrency = cfg.Concurrency
 	qpCfg.Timeout = cfg.Timeout
 	qpCfg.QueryConcurrency = cfg.RequestConcurrency
@@ -221,7 +220,7 @@ func (p *QueryBehaviour) Perform(ctx context.Context) (out BehaviourEvent, perfo
 	}
 
 	// poll the query pool to trigger any timeouts and other scheduled work
-	ev, ok = p.advancePool(ctx, &query.EventPoolPoll{})
+	ev, ok = p.advancePool(ctx, p.cfg.Clock.Now(), &query.EventPoolPoll{})
 	if ok {
 		return ev, true
 	}
@@ -340,7 +339,7 @@ func (p *QueryBehaviour) perfomNextInbound(ctx context.Context) (BehaviourEvent,
 	}
 
 	// attempt to advance the query pool
-	return p.advancePool(pev.Ctx, cmd)
+	return p.advancePool(pev.Ctx, p.cfg.Clock.Now(), cmd)
 }
 
 // updateReadyStatus signals whether the behaviour has further work to do. It is
@@ -379,14 +378,14 @@ func (p *QueryBehaviour) updateReadyStatus(performed bool) {
 // advancePool advances the query pool state machine and returns an outbound event if
 // there is work to be performed. Also notifies waiters of query completion or
 // progress.
-func (p *QueryBehaviour) advancePool(ctx context.Context, ev query.PoolEvent) (out BehaviourEvent, term bool) {
+func (p *QueryBehaviour) advancePool(ctx context.Context, now time.Time, ev query.PoolEvent) (out BehaviourEvent, term bool) {
 	ctx, span := p.cfg.Tracer.Start(ctx, "PooledQueryBehaviour.advancePool", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		span.SetAttributes(tele.AttrOutEvent(out))
 		span.End()
 	}()
 
-	pstate := p.pool.Advance(ctx, ev)
+	pstate := p.pool.Advance(ctx, now, ev)
 	switch st := pstate.(type) {
 	case *query.StatePoolFindCloser[kadt.Key, kadt.PeerID]:
 		return &EventOutboundGetCloserNodes{

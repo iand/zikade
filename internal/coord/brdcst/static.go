@@ -3,6 +3,7 @@ package brdcst
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ipfs/go-libdht/kad"
 	"go.opentelemetry.io/otel/attribute"
@@ -59,7 +60,7 @@ func NewStatic[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.Query
 }
 
 // Advance advances the state of the [Static] [Broadcast] state machine.
-func (f *Static[K, N, M]) Advance(ctx context.Context, ev BroadcastEvent) (out BroadcastState) {
+func (f *Static[K, N, M]) Advance(ctx context.Context, now time.Time, ev BroadcastEvent) (out BroadcastState) {
 	_, span := tele.StartSpan(ctx, "Static.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		span.SetAttributes(

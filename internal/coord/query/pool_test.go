@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad/key"
 	"github.com/stretchr/testify/require"
 
@@ -17,12 +16,6 @@ func TestPoolConfigValidate(t *testing.T) {
 	t.Run("default is valid", func(t *testing.T) {
 		cfg := DefaultPoolConfig()
 		require.NoError(t, cfg.Validate())
-	})
-
-	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultPoolConfig()
-		cfg.Clock = nil
-		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("concurrency positive", func(t *testing.T) {
@@ -68,37 +61,34 @@ func TestPoolConfigValidate(t *testing.T) {
 
 func TestPoolStartsIdle(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultPoolConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	p, err := NewPool[tiny.Key, tiny.Node, tiny.Message](self, cfg)
 	require.NoError(t, err)
 
-	state := p.Advance(ctx, &EventPoolPoll{})
+	state := p.Advance(ctx, now, &EventPoolPoll{})
 	require.IsType(t, &StatePoolIdle{}, state)
 }
 
 func TestPoolStopWhenNoQueries(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultPoolConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	p, err := NewPool[tiny.Key, tiny.Node, tiny.Message](self, cfg)
 	require.NoError(t, err)
 
-	state := p.Advance(ctx, &EventPoolPoll{})
+	state := p.Advance(ctx, now, &EventPoolPoll{})
 	require.IsType(t, &StatePoolIdle{}, state)
 }
 
 func TestPoolAddFindCloserQueryStartsIfCapacity(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultPoolConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	p, err := NewPool[tiny.Key, tiny.Node, tiny.Message](self, cfg)
@@ -110,7 +100,7 @@ func TestPoolAddFindCloserQueryStartsIfCapacity(t *testing.T) {
 	queryID := coordt.QueryID("test")
 
 	// first thing the new pool should do is start the query
-	state := p.Advance(ctx, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+	state := p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
 		QueryID: queryID,
 		Target:  target,
 		Seed:    []tiny.Node{a},
@@ -130,15 +120,14 @@ func TestPoolAddFindCloserQueryStartsIfCapacity(t *testing.T) {
 	require.True(t, key.Equal(target, st.Target))
 
 	// now the pool reports that it is waiting
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, now, &EventPoolPoll{})
 	require.IsType(t, &StatePoolWaitingWithCapacity{}, state)
 }
 
 func TestPoolAddQueryStartsIfCapacity(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultPoolConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	p, err := NewPool[tiny.Key, tiny.Node, tiny.Message](self, cfg)
@@ -150,7 +139,7 @@ func TestPoolAddQueryStartsIfCapacity(t *testing.T) {
 	queryID := coordt.QueryID("test")
 	msg := tiny.Message{Content: "msg"}
 	// first thing the new pool should do is start the query
-	state := p.Advance(ctx, &EventPoolAddQuery[tiny.Key, tiny.Node, tiny.Message]{
+	state := p.Advance(ctx, now, &EventPoolAddQuery[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		Target:  target,
 		Message: msg,
@@ -171,15 +160,14 @@ func TestPoolAddQueryStartsIfCapacity(t *testing.T) {
 	require.Equal(t, msg, st.Message)
 
 	// now the pool reports that it is waiting
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, now, &EventPoolPoll{})
 	require.IsType(t, &StatePoolWaitingWithCapacity{}, state)
 }
 
 func TestPoolNodeResponse(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultPoolConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(0)
 	p, err := NewPool[tiny.Key, tiny.Node, tiny.Message](self, cfg)
@@ -191,7 +179,7 @@ func TestPoolNodeResponse(t *testing.T) {
 	queryID := coordt.QueryID("test")
 
 	// first thing the new pool should do is start the query
-	state := p.Advance(ctx, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+	state := p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
 		QueryID: queryID,
 		Target:  target,
 		Seed:    []tiny.Node{a},
@@ -204,7 +192,7 @@ func TestPoolNodeResponse(t *testing.T) {
 	require.Equal(t, a, st.NodeID)
 
 	// notify query that node was contacted successfully, but no closer nodes
-	state = p.Advance(ctx, &EventPoolNodeResponse[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventPoolNodeResponse[tiny.Key, tiny.Node]{
 		QueryID: queryID,
 		NodeID:  a,
 	})
@@ -220,9 +208,8 @@ func TestPoolNodeResponse(t *testing.T) {
 
 func TestPoolPrefersRunningQueriesOverNewOnes(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultPoolConfig()
-	cfg.Clock = clk
 	cfg.Concurrency = 2 // allow two queries to run concurrently
 
 	self := tiny.NewNode(0)
@@ -237,7 +224,7 @@ func TestPoolPrefersRunningQueriesOverNewOnes(t *testing.T) {
 
 	// Add the first query
 	queryID1 := coordt.QueryID("1")
-	state := p.Advance(ctx, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+	state := p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
 		QueryID: queryID1,
 		Target:  target,
 		Seed:    []tiny.Node{a, b, c, d},
@@ -251,7 +238,7 @@ func TestPoolPrefersRunningQueriesOverNewOnes(t *testing.T) {
 
 	// Add the second query
 	queryID2 := coordt.QueryID("2")
-	state = p.Advance(ctx, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
 		QueryID: queryID2,
 		Target:  target,
 		Seed:    []tiny.Node{a, b, c, d},
@@ -264,21 +251,21 @@ func TestPoolPrefersRunningQueriesOverNewOnes(t *testing.T) {
 	require.Equal(t, b, st.NodeID)
 
 	// advance the pool again, the first query should continue its operation in preference to starting the new query
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, now, &EventPoolPoll{})
 	require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
 	st = state.(*StatePoolFindCloser[tiny.Key, tiny.Node])
 	require.Equal(t, queryID1, st.QueryID)
 	require.Equal(t, c, st.NodeID)
 
 	// advance the pool again, the first query is at capacity so the second query can start
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, now, &EventPoolPoll{})
 	require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
 	st = state.(*StatePoolFindCloser[tiny.Key, tiny.Node])
 	require.Equal(t, queryID2, st.QueryID)
 	require.Equal(t, a, st.NodeID)
 
 	// notify first query that node was contacted successfully, but no closer nodes
-	state = p.Advance(ctx, &EventPoolNodeResponse[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventPoolNodeResponse[tiny.Key, tiny.Node]{
 		QueryID: queryID1,
 		NodeID:  a,
 	})
@@ -290,7 +277,7 @@ func TestPoolPrefersRunningQueriesOverNewOnes(t *testing.T) {
 	require.Equal(t, d, st.NodeID)
 
 	// notify first query that next node was contacted successfully, but no closer nodes
-	state = p.Advance(ctx, &EventPoolNodeResponse[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventPoolNodeResponse[tiny.Key, tiny.Node]{
 		QueryID: queryID1,
 		NodeID:  b,
 	})
@@ -304,9 +291,8 @@ func TestPoolPrefersRunningQueriesOverNewOnes(t *testing.T) {
 
 func TestPoolRespectsConcurrency(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultPoolConfig()
-	cfg.Clock = clk
 	cfg.Concurrency = 2      // allow two queries to run concurrently
 	cfg.QueryConcurrency = 1 // allow each query to have a single request in flight
 
@@ -319,7 +305,7 @@ func TestPoolRespectsConcurrency(t *testing.T) {
 
 	// Add the first query
 	queryID1 := coordt.QueryID("1")
-	state := p.Advance(ctx, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+	state := p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
 		QueryID: queryID1,
 		Target:  target,
 		Seed:    []tiny.Node{a},
@@ -333,7 +319,7 @@ func TestPoolRespectsConcurrency(t *testing.T) {
 
 	// Add the second query
 	queryID2 := coordt.QueryID("2")
-	state = p.Advance(ctx, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
 		QueryID: queryID2,
 		Target:  target,
 		Seed:    []tiny.Node{a},
@@ -347,7 +333,7 @@ func TestPoolRespectsConcurrency(t *testing.T) {
 
 	// Add a third query
 	queryID3 := coordt.QueryID("3")
-	state = p.Advance(ctx, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
 		QueryID: queryID3,
 		Target:  target,
 		Seed:    []tiny.Node{a},
@@ -357,7 +343,7 @@ func TestPoolRespectsConcurrency(t *testing.T) {
 	require.IsType(t, &StatePoolWaitingAtCapacity{}, state)
 
 	// notify first query that next node was contacted successfully, but no closer nodes
-	state = p.Advance(ctx, &EventPoolNodeResponse[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, now, &EventPoolNodeResponse[tiny.Key, tiny.Node]{
 		QueryID: queryID1,
 		NodeID:  a,
 	})
@@ -368,7 +354,7 @@ func TestPoolRespectsConcurrency(t *testing.T) {
 	require.Equal(t, queryID1, stf.QueryID)
 
 	// advancing pool again allows query 3 to start
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, now, &EventPoolPoll{})
 	require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
 	st = state.(*StatePoolFindCloser[tiny.Key, tiny.Node])
 	require.Equal(t, queryID3, st.QueryID)
@@ -387,9 +373,8 @@ func TestPoolQueryTimeout(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			clk := clock.NewMock()
+			now := epoch
 			cfg := DefaultPoolConfig()
-			cfg.Clock = clk
 			cfg.Timeout = 3 * time.Minute
 			cfg.QueryConcurrency = tc.queryConcurrency
 
@@ -406,7 +391,7 @@ func TestPoolQueryTimeout(t *testing.T) {
 
 			queryID := coordt.QueryID("test")
 
-			state := p.Advance(ctx, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
+			state := p.Advance(ctx, now, &EventPoolAddFindCloserQuery[tiny.Key, tiny.Node]{
 				QueryID: queryID,
 				Target:  target,
 				Seed:    []tiny.Node{a},
@@ -414,19 +399,19 @@ func TestPoolQueryTimeout(t *testing.T) {
 			require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
 
 			// the node never responds, but the query has not run out of time yet
-			clk.Add(cfg.Timeout - time.Second)
-			state = p.Advance(ctx, &EventPoolPoll{})
+			now = now.Add(cfg.Timeout - time.Second)
+			state = p.Advance(ctx, now, &EventPoolPoll{})
 			require.IsType(t, &StatePoolWaitingWithCapacity{}, state)
 
 			// once the deadline passes the pool gives up on the query
-			clk.Add(2 * time.Second)
-			state = p.Advance(ctx, &EventPoolPoll{})
+			now = now.Add(2 * time.Second)
+			state = p.Advance(ctx, now, &EventPoolPoll{})
 			require.IsType(t, &StatePoolQueryTimeout{}, state)
 			stt := state.(*StatePoolQueryTimeout)
 			require.Equal(t, queryID, stt.QueryID)
 
 			// the timed out query is no longer held by the pool
-			state = p.Advance(ctx, &EventPoolPoll{})
+			state = p.Advance(ctx, now, &EventPoolPoll{})
 			require.IsType(t, &StatePoolIdle{}, state)
 		})
 	}

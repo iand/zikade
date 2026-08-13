@@ -16,8 +16,11 @@ type QueryID string
 
 const InvalidQueryID QueryID = ""
 
+// StateMachine is a pure state machine: Advance applies an event and returns the resulting
+// state. now is the time the event is being applied at, supplied by the caller so the machine
+// has no clock of its own.
 type StateMachine[E any, S any] interface {
-	Advance(context.Context, E) S
+	Advance(ctx context.Context, now time.Time, ev E) S
 }
 
 // Value is a value that may be stored in the DHT.

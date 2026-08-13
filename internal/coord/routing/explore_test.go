@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad/triert"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,12 +16,6 @@ func TestExploreConfigValidate(t *testing.T) {
 	t.Run("default is valid", func(t *testing.T) {
 		cfg := DefaultExploreConfig()
 		require.NoError(t, cfg.Validate())
-	})
-
-	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultExploreConfig()
-		cfg.Clock = nil
-		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("tracer is not nil", func(t *testing.T) {
@@ -65,9 +58,9 @@ func TestExploreConfigValidate(t *testing.T) {
 // maxCpl is 7 since we are using tiny 8-bit keys
 const maxCplTinyKeys = 7
 
-func DefaultDynamicSchedule(t *testing.T, clk clock.Clock) *DynamicExploreSchedule {
+func DefaultDynamicSchedule(t *testing.T, now time.Time) *DynamicExploreSchedule {
 	t.Helper()
-	s, err := NewDynamicExploreSchedule(maxCplTinyKeys, clk.Now(), time.Hour, 1, 0)
+	s, err := NewDynamicExploreSchedule(maxCplTinyKeys, now, time.Hour, 1, 0)
 	require.NoError(t, err)
 	return s
 }
@@ -93,10 +86,10 @@ func TestDynamicExploreSchedule(t *testing.T) {
 
 	// test invariants
 	for _, tc := range testCases {
-		clk := clock.NewMock()
+		now := epoch
 		maxCpl := 20
 
-		s, err := NewDynamicExploreSchedule(maxCpl, clk.Now(), tc.interval, tc.multiplier, 0)
+		s, err := NewDynamicExploreSchedule(maxCpl, now, tc.interval, tc.multiplier, 0)
 		require.NoError(t, err)
 
 		intervals := make([]time.Duration, 0, maxCpl+1)
@@ -121,27 +114,25 @@ func TestDynamicExploreSchedule(t *testing.T) {
 
 func TestExploreStartsIdle(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultExploreConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(128)
 	rt, err := triert.New[tiny.Key, tiny.Node](self, nil)
 	require.NoError(t, err)
 
-	schedule := DefaultDynamicSchedule(t, clk)
+	schedule := DefaultDynamicSchedule(t, now)
 	ex, err := NewExplore[tiny.Key, tiny.Node](self, rt, tiny.NodeWithCpl, schedule, cfg)
 	require.NoError(t, err)
 
-	state := ex.Advance(ctx, &EventExplorePoll{})
+	state := ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreIdle{}, state)
 }
 
 func TestExploreFirstQueriesForMaximumCpl(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultExploreConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(128)
 	rt, err := triert.New[tiny.Key, tiny.Node](self, nil)
@@ -151,18 +142,18 @@ func TestExploreFirstQueriesForMaximumCpl(t *testing.T) {
 	a := tiny.NewNode(4)
 	rt.AddNode(a)
 
-	schedule := DefaultDynamicSchedule(t, clk)
+	schedule := DefaultDynamicSchedule(t, now)
 	ex, err := NewExplore[tiny.Key, tiny.Node](self, rt, tiny.NodeWithCpl, schedule, cfg)
 	require.NoError(t, err)
 
-	state := ex.Advance(ctx, &EventExplorePoll{})
+	state := ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreIdle{}, state)
 
 	// advance the clock to the due time of the first explore that should be started
-	clk.Add(schedule.cplInterval(schedule.maxCpl))
+	now = now.Add(schedule.cplInterval(schedule.maxCpl))
 
 	// explore should now start the explore query
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
 
 	// the query should attempt to contact the node it was given
@@ -181,16 +172,15 @@ func TestExploreFirstQueriesForMaximumCpl(t *testing.T) {
 	require.Equal(t, a, st.NodeID)
 
 	// now the explore reports that it is waiting
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreWaiting{}, state)
 }
 
 func TestExploreFindCloserResponse(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultExploreConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(128)
 	rt, err := triert.New[tiny.Key, tiny.Node](self, nil)
@@ -200,29 +190,29 @@ func TestExploreFindCloserResponse(t *testing.T) {
 	a := tiny.NewNode(4)
 	rt.AddNode(a)
 
-	start := clk.Now()
+	start := now
 
-	schedule := DefaultDynamicSchedule(t, clk)
+	schedule := DefaultDynamicSchedule(t, now)
 	ex, err := NewExplore[tiny.Key, tiny.Node](self, rt, tiny.NodeWithCpl, schedule, cfg)
 	require.NoError(t, err)
 
-	state := ex.Advance(ctx, &EventExplorePoll{})
+	state := ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreIdle{}, state)
 
 	// advance the clock to the due time of the first explore that should be started
 	interval1 := schedule.cplInterval(schedule.maxCpl)
-	clk.Set(start.Add(interval1))
+	now = start.Add(interval1)
 
 	// explore should now start the explore query
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
 
 	// now the explore reports that it is waiting
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreWaiting{}, state)
 
 	// notify explore that node was contacted successfully, but no closer nodes
-	state = ex.Advance(ctx, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
+	state = ex.Advance(ctx, now, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: a,
 	})
 	require.IsType(t, &StateExploreQueryFinished{}, state)
@@ -230,10 +220,9 @@ func TestExploreFindCloserResponse(t *testing.T) {
 
 func TestExploreFindCloserFailure(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultExploreConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(128)
 	rt, err := triert.New[tiny.Key, tiny.Node](self, nil)
@@ -243,29 +232,29 @@ func TestExploreFindCloserFailure(t *testing.T) {
 	a := tiny.NewNode(4)
 	rt.AddNode(a)
 
-	start := clk.Now()
+	start := now
 
-	schedule := DefaultDynamicSchedule(t, clk)
+	schedule := DefaultDynamicSchedule(t, now)
 	ex, err := NewExplore[tiny.Key, tiny.Node](self, rt, tiny.NodeWithCpl, schedule, cfg)
 	require.NoError(t, err)
 
-	state := ex.Advance(ctx, &EventExplorePoll{})
+	state := ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreIdle{}, state)
 
 	// advance the clock to the due time of the first explore that should be started
 	interval1 := schedule.cplInterval(schedule.maxCpl)
-	clk.Set(start.Add(interval1))
+	now = start.Add(interval1)
 
 	// explore should now start the explore query
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
 
 	// now the explore reports that it is waiting
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreWaiting{}, state)
 
 	// notify explore that node was not
-	state = ex.Advance(ctx, &EventExploreFindCloserFailure[tiny.Key, tiny.Node]{
+	state = ex.Advance(ctx, now, &EventExploreFindCloserFailure[tiny.Key, tiny.Node]{
 		NodeID: a,
 	})
 	require.IsType(t, &StateExploreQueryFinished{}, state)
@@ -273,10 +262,9 @@ func TestExploreFindCloserFailure(t *testing.T) {
 
 func TestExploreProgress(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultExploreConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(128)
 	rt, err := triert.New[tiny.Key, tiny.Node](self, nil)
@@ -293,21 +281,21 @@ func TestExploreProgress(t *testing.T) {
 	// populate the routing table with at least one node
 	rt.AddNode(a)
 
-	start := clk.Now()
+	start := now
 
-	schedule := DefaultDynamicSchedule(t, clk)
+	schedule := DefaultDynamicSchedule(t, now)
 	ex, err := NewExplore[tiny.Key, tiny.Node](self, rt, tiny.NodeWithCpl, schedule, cfg)
 	require.NoError(t, err)
 
-	state := ex.Advance(ctx, &EventExplorePoll{})
+	state := ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreIdle{}, state)
 
 	// advance the clock to the due time of the first explore that should be started
 	interval1 := schedule.cplInterval(schedule.maxCpl)
-	clk.Set(start.Add(interval1))
+	now = start.Add(interval1)
 
 	// explore should now start the explore query
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
 
 	// the query should attempt to contact the node it was given
@@ -315,11 +303,11 @@ func TestExploreProgress(t *testing.T) {
 	require.Equal(t, a, st.NodeID)
 
 	// now the explore reports that it is waiting
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreWaiting{}, state)
 
 	// notify explore that node was contacted successfully, with a closer node
-	state = ex.Advance(ctx, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
+	state = ex.Advance(ctx, now, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID:      a,
 		CloserNodes: []tiny.Node{b},
 	})
@@ -328,7 +316,7 @@ func TestExploreProgress(t *testing.T) {
 	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
 
 	// notify explore that node was contacted successfully, with a closer node
-	state = ex.Advance(ctx, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
+	state = ex.Advance(ctx, now, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID:      b,
 		CloserNodes: []tiny.Node{c},
 	})
@@ -341,7 +329,7 @@ func TestExploreProgress(t *testing.T) {
 	require.Equal(t, c, st.NodeID)
 
 	// notify explore that node was contacted successfully, but no closer nodes
-	state = ex.Advance(ctx, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
+	state = ex.Advance(ctx, now, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: c,
 	})
 	require.IsType(t, &StateExploreQueryFinished{}, state)
@@ -349,10 +337,9 @@ func TestExploreProgress(t *testing.T) {
 
 func TestExploreQueriesNextHighestCpl(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 
 	cfg := DefaultExploreConfig()
-	cfg.Clock = clk
 
 	self := tiny.NewNode(128)
 	rt, err := triert.New[tiny.Key, tiny.Node](self, nil)
@@ -362,21 +349,21 @@ func TestExploreQueriesNextHighestCpl(t *testing.T) {
 	a := tiny.NewNode(4)
 	rt.AddNode(a)
 
-	start := clk.Now()
+	start := now
 
-	schedule := DefaultDynamicSchedule(t, clk)
+	schedule := DefaultDynamicSchedule(t, now)
 	ex, err := NewExplore[tiny.Key, tiny.Node](self, rt, tiny.NodeWithCpl, schedule, cfg)
 	require.NoError(t, err)
 
-	state := ex.Advance(ctx, &EventExplorePoll{})
+	state := ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreIdle{}, state)
 
 	// advance the clock to the due time of the first explore that should be started
 	interval1 := schedule.cplInterval(schedule.maxCpl)
-	clk.Set(start.Add(interval1))
+	now = start.Add(interval1)
 
 	// explore should now start the explore query
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
 	st := state.(*StateExploreFindCloser[tiny.Key, tiny.Node])
 
@@ -393,21 +380,21 @@ func TestExploreQueriesNextHighestCpl(t *testing.T) {
 	require.Equal(t, a, st.NodeID)
 
 	// now the explore reports that it is waiting
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreWaiting{}, state)
 
 	// notify explore that node was contacted successfully, but no closer nodes
-	state = ex.Advance(ctx, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
+	state = ex.Advance(ctx, now, &EventExploreFindCloserResponse[tiny.Key, tiny.Node]{
 		NodeID: a,
 	})
 	require.IsType(t, &StateExploreQueryFinished{}, state)
 
 	// advance the clock to the due time of the second cpl explore that should be started
 	interval2 := schedule.cplInterval(schedule.maxCpl - 1)
-	clk.Set(start.Add(interval2))
+	now = start.Add(interval2)
 
 	// explore should now start another explore query
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
 	st = state.(*StateExploreFindCloser[tiny.Key, tiny.Node])
 
@@ -423,9 +410,8 @@ func TestExploreQueriesNextHighestCpl(t *testing.T) {
 
 func TestExploreQueryTimeout(t *testing.T) {
 	ctx := context.Background()
-	clk := clock.NewMock()
+	now := epoch
 	cfg := DefaultExploreConfig()
-	cfg.Clock = clk
 	cfg.Timeout = 3 * time.Minute
 
 	// the request must outlive the explore so its query is still waiting for a
@@ -439,22 +425,22 @@ func TestExploreQueryTimeout(t *testing.T) {
 	a := tiny.NewNode(4)
 	rt.AddNode(a)
 
-	schedule := DefaultDynamicSchedule(t, clk)
+	schedule := DefaultDynamicSchedule(t, now)
 	ex, err := NewExplore[tiny.Key, tiny.Node](self, rt, tiny.NodeWithCpl, schedule, cfg)
 	require.NoError(t, err)
 
 	// advance the clock to the due time of the first explore so a query starts
-	clk.Add(schedule.cplInterval(schedule.maxCpl))
-	state := ex.Advance(ctx, &EventExplorePoll{})
+	now = now.Add(schedule.cplInterval(schedule.maxCpl))
+	state := ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreFindCloser[tiny.Key, tiny.Node]{}, state)
 
 	// the node never responds, but the explore has not run out of time yet
-	clk.Add(cfg.Timeout - time.Second)
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	now = now.Add(cfg.Timeout - time.Second)
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreWaiting{}, state)
 
 	// once the deadline passes the explore gives up on its query
-	clk.Add(2 * time.Second)
-	state = ex.Advance(ctx, &EventExplorePoll{})
+	now = now.Add(2 * time.Second)
+	state = ex.Advance(ctx, now, &EventExplorePoll{})
 	require.IsType(t, &StateExploreQueryTimeout{}, state)
 }

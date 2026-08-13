@@ -34,7 +34,7 @@ func TestBroadcastBehaviourContactsAllSeeds(t *testing.T) {
 	pool, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, nil)
 	require.NoError(t, err)
 
-	b := NewPooledBroadcastBehaviour(pool, tele.DefaultLogger("coord"), tele.NoopTracer())
+	b := NewPooledBroadcastBehaviour(pool, clock.New(), tele.DefaultLogger("coord"), tele.NoopTracer())
 
 	seeds := []kadt.PeerID{
 		nodes[1].NodeID,

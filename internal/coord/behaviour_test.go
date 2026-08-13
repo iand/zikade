@@ -3,6 +3,7 @@ package coord
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 type RecordingSM[E any, S any] struct {
@@ -16,7 +17,7 @@ func NewRecordingSM[E any, S any](response S) *RecordingSM[E, S] {
 	}
 }
 
-func (r *RecordingSM[E, S]) Advance(ctx context.Context, e E) S {
+func (r *RecordingSM[E, S]) Advance(ctx context.Context, now time.Time, e E) S {
 	r.Received = append(r.Received, e)
 	return r.State
 }

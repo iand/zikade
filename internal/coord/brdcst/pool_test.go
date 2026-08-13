@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ipfs/go-libdht/kad/key"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ func TestPoolStopWhenNoQueries(t *testing.T) {
 	p, err := NewPool[tiny.Key, tiny.Node, tiny.Message](self, cfg)
 	require.NoError(t, err)
 
-	state := p.Advance(ctx, &EventPoolPoll{})
+	state := p.Advance(ctx, epoch, &EventPoolPoll{})
 	require.IsType(t, &StatePoolIdle{}, state)
 }
 
@@ -52,7 +53,7 @@ func TestPool_FollowUp_lifecycle(t *testing.T) {
 
 	queryID := coordt.QueryID("test")
 
-	state := p.Advance(ctx, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
+	state := p.Advance(ctx, epoch, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		Target:  target,
 		Message: msg,
@@ -69,12 +70,12 @@ func TestPool_FollowUp_lifecycle(t *testing.T) {
 	require.True(t, key.Equal(target, st.Target)) // with the correct target
 
 	// polling the state machine returns waiting
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
 	require.IsType(t, &StatePoolWaiting{}, state)
 
 	// notify pool that the node was contacted successfully
 	// with a single closer node.
-	state = p.Advance(ctx, &EventPoolGetCloserNodesSuccess[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, epoch, &EventPoolGetCloserNodesSuccess[tiny.Key, tiny.Node]{
 		QueryID:     queryID,
 		Target:      target,
 		NodeID:      a,
@@ -91,7 +92,7 @@ func TestPool_FollowUp_lifecycle(t *testing.T) {
 
 	// notify pool that the node was contacted successfully
 	// with no new node.
-	state = p.Advance(ctx, &EventPoolGetCloserNodesSuccess[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, epoch, &EventPoolGetCloserNodesSuccess[tiny.Key, tiny.Node]{
 		QueryID:     queryID,
 		Target:      target,
 		NodeID:      b,
@@ -108,7 +109,7 @@ func TestPool_FollowUp_lifecycle(t *testing.T) {
 
 	// this last node times out -> start contacting the other two
 	timeoutErr := fmt.Errorf("timeout")
-	state = p.Advance(ctx, &EventPoolGetCloserNodesFailure[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, epoch, &EventPoolGetCloserNodesFailure[tiny.Key, tiny.Node]{
 		QueryID: queryID,
 		NodeID:  c,
 		Target:  target,
@@ -126,7 +127,7 @@ func TestPool_FollowUp_lifecycle(t *testing.T) {
 
 	// polling the state machine should trigger storing the record with
 	// the second node
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
 	srState, ok = state.(*StatePoolStoreRecord[tiny.Key, tiny.Node, tiny.Message])
 	require.True(t, ok, "state is %T", state)
 
@@ -136,11 +137,11 @@ func TestPool_FollowUp_lifecycle(t *testing.T) {
 	require.Equal(t, msg.Content, srState.Message.Content)
 
 	// since we have two requests in-flight, polling should return a waiting state machine
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
 	require.IsType(t, &StatePoolWaiting{}, state)
 
 	// first response from storing the record comes back
-	state = p.Advance(ctx, &EventPoolStoreRecordSuccess[tiny.Key, tiny.Node, tiny.Message]{
+	state = p.Advance(ctx, epoch, &EventPoolStoreRecordSuccess[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		NodeID:  a,
 		Request: msg,
@@ -148,7 +149,7 @@ func TestPool_FollowUp_lifecycle(t *testing.T) {
 	require.IsType(t, &StatePoolWaiting{}, state)
 
 	// second response from storing the record comes back and it failed!
-	state = p.Advance(ctx, &EventPoolStoreRecordFailure[tiny.Key, tiny.Node, tiny.Message]{
+	state = p.Advance(ctx, epoch, &EventPoolStoreRecordFailure[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		NodeID:  b,
 		Request: msg,
@@ -165,7 +166,7 @@ func TestPool_FollowUp_lifecycle(t *testing.T) {
 	require.Equal(t, finishState.Errors[b.String()].Node, b)
 	require.Equal(t, finishState.Errors[b.String()].Err, timeoutErr)
 
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
 	require.IsType(t, &StatePoolIdle{}, state)
 
 	require.Nil(t, p.bcs[queryID]) // should have been removed
@@ -189,7 +190,7 @@ func TestPool_FollowUp_stop_during_query(t *testing.T) {
 
 	queryID := coordt.QueryID("test")
 
-	state := p.Advance(ctx, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
+	state := p.Advance(ctx, epoch, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		Target:  target,
 		Message: msg,
@@ -206,10 +207,10 @@ func TestPool_FollowUp_stop_during_query(t *testing.T) {
 	require.True(t, key.Equal(target, st.Target)) // with the correct target
 
 	// polling the state machine returns waiting
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
 	require.IsType(t, &StatePoolWaiting{}, state)
 
-	state = p.Advance(ctx, &EventPoolStopBroadcast{
+	state = p.Advance(ctx, epoch, &EventPoolStopBroadcast{
 		QueryID: queryID,
 	})
 	finish, ok := state.(*StatePoolBroadcastFinished[tiny.Key, tiny.Node])
@@ -233,7 +234,7 @@ func TestPool_FollowUp_stop_during_followup_phase(t *testing.T) {
 
 	queryID := coordt.QueryID("test")
 
-	state := p.Advance(ctx, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
+	state := p.Advance(ctx, epoch, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		Target:  target,
 		Message: msg,
@@ -242,10 +243,10 @@ func TestPool_FollowUp_stop_during_followup_phase(t *testing.T) {
 	})
 
 	require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
 	require.IsType(t, &StatePoolFindCloser[tiny.Key, tiny.Node]{}, state)
 
-	state = p.Advance(ctx, &EventPoolGetCloserNodesSuccess[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, epoch, &EventPoolGetCloserNodesSuccess[tiny.Key, tiny.Node]{
 		QueryID:     queryID,
 		Target:      target,
 		NodeID:      a,
@@ -253,7 +254,7 @@ func TestPool_FollowUp_stop_during_followup_phase(t *testing.T) {
 	})
 	require.IsType(t, &StatePoolWaiting{}, state)
 
-	state = p.Advance(ctx, &EventPoolGetCloserNodesSuccess[tiny.Key, tiny.Node]{
+	state = p.Advance(ctx, epoch, &EventPoolGetCloserNodesSuccess[tiny.Key, tiny.Node]{
 		QueryID:     queryID,
 		Target:      target,
 		NodeID:      b,
@@ -261,7 +262,7 @@ func TestPool_FollowUp_stop_during_followup_phase(t *testing.T) {
 	})
 	require.IsType(t, &StatePoolStoreRecord[tiny.Key, tiny.Node, tiny.Message]{}, state)
 
-	state = p.Advance(ctx, &EventPoolStopBroadcast{
+	state = p.Advance(ctx, epoch, &EventPoolStopBroadcast{
 		QueryID: queryID,
 	})
 
@@ -296,19 +297,19 @@ func TestPool_empty_seed(t *testing.T) {
 	t.Run("follow up", func(t *testing.T) {
 		startEvt.Config = DefaultConfigFollowUp()
 
-		state := p.Advance(ctx, startEvt)
+		state := p.Advance(ctx, epoch, startEvt)
 		require.IsType(t, &StatePoolBroadcastFinished[tiny.Key, tiny.Node]{}, state)
 
-		state = p.Advance(ctx, &EventPoolPoll{})
+		state = p.Advance(ctx, epoch, &EventPoolPoll{})
 		require.IsType(t, &StatePoolIdle{}, state)
 	})
 
 	t.Run("static", func(t *testing.T) {
 		startEvt.Config = DefaultConfigStatic()
-		state := p.Advance(ctx, startEvt)
+		state := p.Advance(ctx, epoch, startEvt)
 		require.IsType(t, &StatePoolBroadcastFinished[tiny.Key, tiny.Node]{}, state)
 
-		state = p.Advance(ctx, &EventPoolPoll{})
+		state = p.Advance(ctx, epoch, &EventPoolPoll{})
 		require.IsType(t, &StatePoolIdle{}, state)
 	})
 }
@@ -330,7 +331,7 @@ func TestPool_Static_happy_path(t *testing.T) {
 
 	queryID := coordt.QueryID("test")
 
-	state := p.Advance(ctx, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
+	state := p.Advance(ctx, epoch, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		Target:  target,
 		Message: msg,
@@ -341,12 +342,12 @@ func TestPool_Static_happy_path(t *testing.T) {
 	require.True(t, ok, "state is %T", state)
 	first := spsr.NodeID
 
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
 	spsr, ok = state.(*StatePoolStoreRecord[tiny.Key, tiny.Node, tiny.Message])
 	require.True(t, ok, "state is %T", state)
 	second := spsr.NodeID
 
-	state = p.Advance(ctx, &EventPoolStoreRecordSuccess[tiny.Key, tiny.Node, tiny.Message]{
+	state = p.Advance(ctx, epoch, &EventPoolStoreRecordSuccess[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		NodeID:  first,
 		Request: msg,
@@ -355,14 +356,14 @@ func TestPool_Static_happy_path(t *testing.T) {
 	require.True(t, ok, "state is %T", state)
 	third := spsr.NodeID
 
-	state = p.Advance(ctx, &EventPoolStoreRecordFailure[tiny.Key, tiny.Node, tiny.Message]{
+	state = p.Advance(ctx, epoch, &EventPoolStoreRecordFailure[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		NodeID:  second,
 		Request: msg,
 	})
 	require.IsType(t, &StatePoolWaiting{}, state)
 
-	state = p.Advance(ctx, &EventPoolStoreRecordSuccess[tiny.Key, tiny.Node, tiny.Message]{
+	state = p.Advance(ctx, epoch, &EventPoolStoreRecordSuccess[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		NodeID:  third,
 		Request: msg,
@@ -387,7 +388,7 @@ func TestPool_Static_stop_mid_flight(t *testing.T) {
 
 	queryID := coordt.QueryID("test")
 
-	state := p.Advance(ctx, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
+	state := p.Advance(ctx, epoch, &EventPoolStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: queryID,
 		Target:  target,
 		Message: msg,
@@ -396,10 +397,10 @@ func TestPool_Static_stop_mid_flight(t *testing.T) {
 	})
 	require.IsType(t, &StatePoolStoreRecord[tiny.Key, tiny.Node, tiny.Message]{}, state)
 
-	state = p.Advance(ctx, &EventPoolPoll{})
+	state = p.Advance(ctx, epoch, &EventPoolPoll{})
 	require.IsType(t, &StatePoolStoreRecord[tiny.Key, tiny.Node, tiny.Message]{}, state)
 
-	state = p.Advance(ctx, &EventPoolStopBroadcast{QueryID: queryID})
+	state = p.Advance(ctx, epoch, &EventPoolStopBroadcast{QueryID: queryID})
 	require.IsType(t, &StatePoolBroadcastFinished[tiny.Key, tiny.Node]{}, state)
 }
 
@@ -430,3 +431,7 @@ func TestPoolEvent_interface_conformance(t *testing.T) {
 		ev.poolEvent() // drives test coverage
 	}
 }
+
+// epoch is the base instant for tests. State machines take the current time as a
+// parameter, so tests move time by passing a later instant rather than by advancing a clock.
+var epoch = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)

@@ -182,7 +182,7 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 		return nil, fmt.Errorf("broadcast: %w", err)
 	}
 
-	brdcstBehaviour := NewPooledBroadcastBehaviour(b, cfg.Logger, tele.Tracer)
+	brdcstBehaviour := NewPooledBroadcastBehaviour(b, cfg.Clock, cfg.Logger, tele.Tracer)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

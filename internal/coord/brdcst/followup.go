@@ -3,6 +3,7 @@ package brdcst
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ipfs/go-libdht/kad"
 	"go.opentelemetry.io/otel/trace"
@@ -79,7 +80,7 @@ func NewFollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.Que
 // a query pool event, we check if there are any nodes we should contact to hold
 // the record for us and emit that instruction instead. Similarly, if we're
 // waiting on responses or are completely finished, we return that as well.
-func (f *FollowUp[K, N, M]) Advance(ctx context.Context, ev BroadcastEvent) (out BroadcastState) {
+func (f *FollowUp[K, N, M]) Advance(ctx context.Context, now time.Time, ev BroadcastEvent) (out BroadcastState) {
 	ctx, span := tele.StartSpan(ctx, "FollowUp.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		span.SetAttributes(tele.AttrOutEvent(out))
@@ -88,7 +89,7 @@ func (f *FollowUp[K, N, M]) Advance(ctx context.Context, ev BroadcastEvent) (out
 
 	pev := f.handleEvent(ctx, ev)
 	if pev != nil {
-		if state, terminal := f.advancePool(ctx, pev); terminal {
+		if state, terminal := f.advancePool(ctx, now, pev); terminal {
 			return state
 		}
 	}
@@ -197,14 +198,14 @@ func (f *FollowUp[K, N, M]) handleEvent(ctx context.Context, ev BroadcastEvent) 
 // advancePool advances the query pool with the given query pool event that was
 // returned by [FollowUp.handleEvent]. The additional boolean value indicates
 // whether the returned [BroadcastState] should be ignored.
-func (f *FollowUp[K, N, M]) advancePool(ctx context.Context, ev query.PoolEvent) (out BroadcastState, term bool) {
+func (f *FollowUp[K, N, M]) advancePool(ctx context.Context, now time.Time, ev query.PoolEvent) (out BroadcastState, term bool) {
 	ctx, span := tele.StartSpan(ctx, "FollowUp.advanceQuery", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		span.SetAttributes(tele.AttrOutEvent(out))
 		span.End()
 	}()
 
-	state := f.pool.Advance(ctx, ev)
+	state := f.pool.Advance(ctx, now, ev)
 	switch st := state.(type) {
 	case *query.StatePoolFindCloser[K, N]:
 		return &StateBroadcastFindCloser[K, N]{

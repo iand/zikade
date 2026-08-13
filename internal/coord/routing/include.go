@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 	"github.com/ipfs/go-libdht/kad/key"
 	"go.opentelemetry.io/otel/metric"
@@ -60,7 +59,6 @@ type IncludeConfig struct {
 	QueueCapacity int           // the maximum number of nodes that can be in the candidate queue
 	Concurrency   int           // the maximum number of include checks that may be in progress at any one time
 	Timeout       time.Duration // the time to wait before terminating a check that is not making progress
-	Clock         clock.Clock   // a clock that may replaced by a mock when testing
 
 	// Tracer is the tracer that should be used to trace execution.
 	Tracer trace.Tracer
@@ -71,13 +69,6 @@ type IncludeConfig struct {
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *IncludeConfig) Validate() error {
-	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
-			Component: "IncludeConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
-
 	if cfg.Concurrency < 1 {
 		return &errs.ConfigurationError{
 			Component: "IncludeConfig",
@@ -120,7 +111,6 @@ func (cfg *IncludeConfig) Validate() error {
 // Options may be overridden before passing to NewInclude
 func DefaultIncludeConfig() *IncludeConfig {
 	return &IncludeConfig{
-		Clock:  clock.New(), // use standard time
 		Tracer: tele.NoopTracer(),
 		Meter:  tele.NoopMeter(),
 
@@ -194,7 +184,7 @@ func NewInclude[K kad.Key[K], N kad.NodeID[K]](rt kad.RoutingTable[K, N], cfg *I
 }
 
 // Advance advances the state of the include state machine by attempting to advance its query if running.
-func (in *Include[K, N]) Advance(ctx context.Context, ev IncludeEvent) (out IncludeState) {
+func (in *Include[K, N]) Advance(ctx context.Context, now time.Time, ev IncludeEvent) (out IncludeState) {
 	ctx, span := in.cfg.Tracer.Start(ctx, "Include.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		in.candidateCount.Store(int64(in.candidates.Len()))
@@ -263,7 +253,7 @@ func (in *Include[K, N]) Advance(ctx context.Context, ev IncludeEvent) (out Incl
 
 	in.checks[key.HexString(candidate.Key())] = check[K, N]{
 		NodeID:  candidate,
-		Started: in.cfg.Clock.Now(),
+		Started: now,
 	}
 
 	// Ask the node to find itself

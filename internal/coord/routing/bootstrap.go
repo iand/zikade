@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -52,7 +51,6 @@ type BootstrapConfig struct {
 	Timeout            time.Duration // the time to wait before terminating a query that is not making progress
 	RequestConcurrency int           // the maximum number of concurrent requests that each query may have in flight
 	RequestTimeout     time.Duration // the timeout queries should use for contacting a single node
-	Clock              clock.Clock   // a clock that may replaced by a mock when testing
 
 	// Tracer is the tracer that should be used to trace execution.
 	Tracer trace.Tracer
@@ -63,13 +61,6 @@ type BootstrapConfig struct {
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *BootstrapConfig) Validate() error {
-	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
-			Component: "BootstrapConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
-
 	if cfg.Tracer == nil {
 		return &errs.ConfigurationError{
 			Component: "BootstrapConfig",
@@ -112,7 +103,6 @@ func (cfg *BootstrapConfig) Validate() error {
 // Options may be overridden before passing to NewBootstrap
 func DefaultBootstrapConfig() *BootstrapConfig {
 	return &BootstrapConfig{
-		Clock:  clock.New(), // use standard time
 		Tracer: tele.NoopTracer(),
 		Meter:  tele.NoopMeter(),
 
@@ -179,7 +169,7 @@ func NewBootstrap[K kad.Key[K], N kad.NodeID[K]](self N, cfg *BootstrapConfig) (
 }
 
 // Advance advances the state of the bootstrap by attempting to advance its query if running.
-func (b *Bootstrap[K, N]) Advance(ctx context.Context, ev BootstrapEvent) (out BootstrapState) {
+func (b *Bootstrap[K, N]) Advance(ctx context.Context, now time.Time, ev BootstrapEvent) (out BootstrapState) {
 	ctx, span := b.cfg.Tracer.Start(ctx, "Bootstrap.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
 	defer func() {
 		b.running.Store(b.qry != nil) // record whether the bootstrap is still running for metrics
@@ -190,13 +180,12 @@ func (b *Bootstrap[K, N]) Advance(ctx context.Context, ev BootstrapEvent) (out B
 	switch tev := ev.(type) {
 	case *EventBootstrapStart[K, N]:
 		if b.qry != nil {
-			return b.advanceQuery(ctx, &query.EventQueryPoll{})
+			return b.advanceQuery(ctx, now, &query.EventQueryPoll{})
 		}
 
 		iter := query.NewClosestNodesIter[K, N](b.self.Key())
 
 		qryCfg := query.DefaultQueryConfig()
-		qryCfg.Clock = b.cfg.Clock
 		qryCfg.Concurrency = b.cfg.RequestConcurrency
 		qryCfg.RequestTimeout = b.cfg.RequestTimeout
 		qryCfg.Timeout = b.cfg.Timeout
@@ -207,13 +196,13 @@ func (b *Bootstrap[K, N]) Advance(ctx context.Context, ev BootstrapEvent) (out B
 			panic(err)
 		}
 		b.qry = qry
-		return b.advanceQuery(ctx, &query.EventQueryPoll{})
+		return b.advanceQuery(ctx, now, &query.EventQueryPoll{})
 
 	case *EventBootstrapFindCloserResponse[K, N]:
 		// ignore late responses
 		if b.qry != nil {
 			b.counterFindSucceeded.Add(ctx, 1)
-			return b.advanceQuery(ctx, &query.EventQueryNodeResponse[K, N]{
+			return b.advanceQuery(ctx, now, &query.EventQueryNodeResponse[K, N]{
 				NodeID:      tev.NodeID,
 				CloserNodes: tev.CloserNodes,
 			})
@@ -223,7 +212,7 @@ func (b *Bootstrap[K, N]) Advance(ctx context.Context, ev BootstrapEvent) (out B
 		if b.qry != nil {
 			b.counterFindFailed.Add(ctx, 1)
 			span.RecordError(tev.Error)
-			return b.advanceQuery(ctx, &query.EventQueryNodeFailure[K, N]{
+			return b.advanceQuery(ctx, now, &query.EventQueryNodeFailure[K, N]{
 				NodeID: tev.NodeID,
 				Error:  tev.Error,
 			})
@@ -235,16 +224,16 @@ func (b *Bootstrap[K, N]) Advance(ctx context.Context, ev BootstrapEvent) (out B
 	}
 
 	if b.qry != nil {
-		return b.advanceQuery(ctx, &query.EventQueryPoll{})
+		return b.advanceQuery(ctx, now, &query.EventQueryPoll{})
 	}
 
 	return &StateBootstrapIdle{}
 }
 
-func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent) BootstrapState {
+func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, now time.Time, qev query.QueryEvent) BootstrapState {
 	ctx, span := b.cfg.Tracer.Start(ctx, "Bootstrap.advanceQuery")
 	defer span.End()
-	state := b.qry.Advance(ctx, qev)
+	state := b.qry.Advance(ctx, now, qev)
 	switch st := state.(type) {
 	case *query.StateQueryFindCloser[K, N]:
 		b.counterFindSent.Add(ctx, 1)
@@ -262,7 +251,7 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent
 			Stats: st.Stats,
 		}
 	case *query.StateQueryWaitingAtCapacity:
-		if b.cfg.Clock.Now().After(st.Deadline) {
+		if now.After(st.Deadline) {
 			b.counterFindFailed.Add(ctx, 1)
 			span.SetAttributes(attribute.String("out_state", "StateBootstrapTimeout"))
 			return &StateBootstrapTimeout{
@@ -274,7 +263,7 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, qev query.QueryEvent
 			Stats: st.Stats,
 		}
 	case *query.StateQueryWaitingWithCapacity:
-		if b.cfg.Clock.Now().After(st.Deadline) {
+		if now.After(st.Deadline) {
 			b.counterFindFailed.Add(ctx, 1)
 			span.SetAttributes(attribute.String("out_state", "StateBootstrapTimeout"))
 			return &StateBootstrapTimeout{
