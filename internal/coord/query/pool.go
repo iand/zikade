@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/ipfs/go-libdht/kad"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
-	"github.com/probe-lab/zikade/tele"
 )
 
 type Pool[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
@@ -32,6 +32,9 @@ type PoolConfig struct {
 	Replication      int           // the 'k' parameter defined by Kademlia
 	QueryConcurrency int           // the maximum number of concurrent requests that each query may have in flight
 	RequestTimeout   time.Duration // the timeout queries should use for contacting a single node
+
+	// Tracer is the tracer that should be used to trace execution.
+	Tracer trace.Tracer
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
@@ -69,6 +72,13 @@ func (cfg *PoolConfig) Validate() error {
 		}
 	}
 
+	if cfg.Tracer == nil {
+		return &errs.ConfigurationError{
+			Component: "PoolConfig",
+			Err:       fmt.Errorf("tracer must not be nil"),
+		}
+	}
+
 	return nil
 }
 
@@ -81,6 +91,7 @@ func DefaultPoolConfig() *PoolConfig {
 		Replication:      20,
 		QueryConcurrency: 3,
 		RequestTimeout:   time.Minute,
+		Tracer:           coordt.NoopTracer(),
 	}
 }
 
@@ -101,7 +112,7 @@ func NewPool[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, cfg *PoolC
 
 // Advance advances the state of the pool by attempting to advance one of its queries
 func (p *Pool[K, N, M]) Advance(ctx context.Context, now time.Time, ev PoolEvent) PoolState {
-	ctx, span := tele.StartSpan(ctx, "Pool.Advance")
+	ctx, span := p.cfg.Tracer.Start(ctx, "Pool.Advance")
 	defer span.End()
 
 	// reset the in flight counter so it can be calculated as the queries are advanced
@@ -279,6 +290,7 @@ func (p *Pool[K, N, M]) addQuery(ctx context.Context, queryID coordt.QueryID, ta
 	qryCfg.Concurrency = p.cfg.QueryConcurrency
 	qryCfg.RequestTimeout = p.cfg.RequestTimeout
 	qryCfg.Timeout = p.cfg.Timeout
+	qryCfg.Tracer = p.cfg.Tracer
 
 	if numResults > 0 {
 		qryCfg.NumResults = numResults
@@ -306,6 +318,7 @@ func (p *Pool[K, N, M]) addFindCloserQuery(ctx context.Context, queryID coordt.Q
 	qryCfg.Concurrency = p.cfg.QueryConcurrency
 	qryCfg.RequestTimeout = p.cfg.RequestTimeout
 	qryCfg.Timeout = p.cfg.Timeout
+	qryCfg.Tracer = p.cfg.Tracer
 
 	if numResults > 0 {
 		qryCfg.NumResults = numResults

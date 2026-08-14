@@ -11,7 +11,6 @@ import (
 
 	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
-	"github.com/probe-lab/zikade/tele"
 )
 
 type QueryStats struct {
@@ -28,6 +27,9 @@ type QueryConfig struct {
 	NumResults     int           // the minimum number of nodes to successfully contact before considering iteration complete
 	RequestTimeout time.Duration // the timeout for contacting a single node
 	Timeout        time.Duration // the time to wait before the query is considered to have stopped making progress
+
+	// Tracer is the tracer that should be used to trace execution.
+	Tracer trace.Tracer
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
@@ -56,6 +58,12 @@ func (cfg *QueryConfig) Validate() error {
 			Err:       fmt.Errorf("timeout must be greater than zero"),
 		}
 	}
+	if cfg.Tracer == nil {
+		return &errs.ConfigurationError{
+			Component: "QueryConfig",
+			Err:       fmt.Errorf("tracer must not be nil"),
+		}
+	}
 	return nil
 }
 
@@ -67,6 +75,7 @@ func DefaultQueryConfig() *QueryConfig {
 		NumResults:     20,
 		RequestTimeout: time.Minute,
 		Timeout:        5 * time.Minute,
+		Tracer:         coordt.NoopTracer(),
 	}
 }
 
@@ -146,9 +155,9 @@ func NewQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, id coordt
 }
 
 func (q *Query[K, N, M]) Advance(ctx context.Context, now time.Time, ev QueryEvent) (out QueryState) {
-	ctx, span := tele.StartSpan(ctx, "Query.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
+	ctx, span := q.cfg.Tracer.Start(ctx, "Query.Advance", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 

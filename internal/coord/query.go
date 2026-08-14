@@ -164,6 +164,7 @@ func NewQueryBehaviour(self kadt.PeerID, cfg *QueryConfig) (*QueryBehaviour, err
 	qpCfg.Timeout = cfg.Timeout
 	qpCfg.QueryConcurrency = cfg.RequestConcurrency
 	qpCfg.RequestTimeout = cfg.RequestTimeout
+	qpCfg.Tracer = cfg.Tracer
 
 	pool, err := query.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, qpCfg)
 	if err != nil {

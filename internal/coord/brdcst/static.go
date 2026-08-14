@@ -10,7 +10,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
-	"github.com/probe-lab/zikade/tele"
 )
 
 // Static is a [Broadcast] state machine and encapsulates the logic around
@@ -41,13 +40,19 @@ type Static[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
 		Node N
 		Err  error
 	}
+
+	// tracer traces the execution of this state machine. It is supplied by the
+	// pool that created it, since the per-broadcast configuration carries no
+	// telemetry of its own.
+	tracer trace.Tracer
 }
 
 // NewStatic initializes a new [Static] struct.
-func NewStatic[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.QueryID, msg M, cfg *ConfigStatic) *Static[K, N, M] {
+func NewStatic[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.QueryID, msg M, cfg *ConfigStatic, tracer trace.Tracer) *Static[K, N, M] {
 	return &Static[K, N, M]{
 		queryID: qid,
 		cfg:     cfg,
+		tracer:  tracer,
 		msg:     msg,
 		todo:    map[string]N{},
 		waiting: map[string]N{},
@@ -61,10 +66,10 @@ func NewStatic[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.Query
 
 // Advance advances the state of the [Static] [Broadcast] state machine.
 func (f *Static[K, N, M]) Advance(ctx context.Context, now time.Time, ev BroadcastEvent) (out BroadcastState) {
-	_, span := tele.StartSpan(ctx, "Static.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
+	_, span := f.tracer.Start(ctx, "Static.Advance", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
 		span.SetAttributes(
-			tele.AttrOutEvent(out),
+			coordt.AttrOutEvent(out),
 			attribute.Int("todo", len(f.todo)),
 			attribute.Int("waiting", len(f.waiting)),
 			attribute.Int("success", len(f.success)),

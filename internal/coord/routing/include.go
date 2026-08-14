@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/probe-lab/zikade/errs"
-	"github.com/probe-lab/zikade/tele"
+	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
 type check[K kad.Key[K], N kad.NodeID[K]] struct {
@@ -114,8 +114,8 @@ func (cfg *IncludeConfig) Validate() error {
 // Options may be overridden before passing to NewInclude
 func DefaultIncludeConfig() *IncludeConfig {
 	return &IncludeConfig{
-		Tracer: tele.NoopTracer(),
-		Meter:  tele.NoopMeter(),
+		Tracer: coordt.NoopTracer(),
+		Meter:  coordt.NoopMeter(),
 
 		Concurrency:   3,
 		Timeout:       time.Minute,
@@ -188,10 +188,10 @@ func NewInclude[K kad.Key[K], N kad.NodeID[K]](rt kad.RoutingTable[K, N], cfg *I
 
 // Advance advances the state of the include state machine by attempting to advance its query if running.
 func (in *Include[K, N]) Advance(ctx context.Context, now time.Time, ev IncludeEvent) (out IncludeState) {
-	ctx, span := in.cfg.Tracer.Start(ctx, "Include.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
+	ctx, span := in.cfg.Tracer.Start(ctx, "Include.Advance", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
 		in.candidateCount.Store(int64(in.candidates.Len()))
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 

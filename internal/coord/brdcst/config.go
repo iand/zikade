@@ -3,12 +3,18 @@ package brdcst
 import (
 	"fmt"
 
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/query"
 )
 
 // ConfigPool specifies the configuration for a broadcast [Pool].
 type ConfigPool struct {
 	pCfg *query.PoolConfig
+
+	// Tracer is the tracer that should be used to trace execution.
+	Tracer trace.Tracer
 }
 
 // Validate checks the configuration options and returns an error if any have
@@ -18,6 +24,10 @@ func (cfg *ConfigPool) Validate() error {
 		return fmt.Errorf("query pool config must not be nil")
 	}
 
+	if cfg.Tracer == nil {
+		return fmt.Errorf("tracer must not be nil")
+	}
+
 	return nil
 }
 
@@ -25,7 +35,8 @@ func (cfg *ConfigPool) Validate() error {
 // Options may be overridden before passing to NewPool
 func DefaultConfigPool() *ConfigPool {
 	return &ConfigPool{
-		pCfg: query.DefaultPoolConfig(),
+		pCfg:   query.DefaultPoolConfig(),
+		Tracer: coordt.NoopTracer(),
 	}
 }
 

@@ -14,7 +14,6 @@ import (
 	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/query"
-	"github.com/probe-lab/zikade/tele"
 )
 
 // BootstrapQueryID is the id for the query operated by the bootstrap process
@@ -154,8 +153,8 @@ func (cfg *BootstrapConfig) Validate() error {
 // Options may be overridden before passing to NewBootstrap
 func DefaultBootstrapConfig() *BootstrapConfig {
 	return &BootstrapConfig{
-		Tracer: tele.NoopTracer(),
-		Meter:  tele.NoopMeter(),
+		Tracer: coordt.NoopTracer(),
+		Meter:  coordt.NoopMeter(),
 
 		Timeout:            5 * time.Minute, // MAGIC
 		RequestConcurrency: 3,               // MAGIC
@@ -244,10 +243,10 @@ func NewBootstrap[K kad.Key[K], N kad.NodeID[K]](self N, rt kad.RoutingTable[K, 
 
 // Advance advances the state of the bootstrap by attempting to advance its query if running.
 func (b *Bootstrap[K, N]) Advance(ctx context.Context, now time.Time, ev BootstrapEvent) (out BootstrapState) {
-	ctx, span := b.cfg.Tracer.Start(ctx, "Bootstrap.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
+	ctx, span := b.cfg.Tracer.Start(ctx, "Bootstrap.Advance", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
 		b.running.Store(b.qry != nil) // record whether the bootstrap is still running for metrics
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 

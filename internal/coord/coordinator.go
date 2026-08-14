@@ -188,7 +188,10 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 		return nil, fmt.Errorf("network behaviour: %w", err)
 	}
 
-	b, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, nil)
+	bpCfg := brdcst.DefaultConfigPool()
+	bpCfg.Tracer = tele.Tracer
+
+	b, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, bpCfg)
 	if err != nil {
 		return nil, fmt.Errorf("broadcast: %w", err)
 	}

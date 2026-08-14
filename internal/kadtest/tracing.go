@@ -13,9 +13,10 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/probe-lab/zikade/tele"
 )
+
+// serviceName identifies traces emitted by tests using [MaybeTrace].
+const serviceName = "zikade-test"
 
 var (
 	tracing     = flag.Bool("tracing", false, "Enable or disable tracing")
@@ -65,7 +66,7 @@ func OtelTracerProvider(ctx context.Context, t testing.TB) trace.TracerProvider 
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(resource.NewWithAttributes(
 			semconv.SchemaURL,
-			semconv.ServiceNameKey.String(tele.TracerName),
+			semconv.ServiceNameKey.String(serviceName),
 			semconv.DeploymentEnvironmentKey.String("testing"),
 		)),
 	)

@@ -10,7 +10,6 @@ import (
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/query"
-	"github.com/probe-lab/zikade/tele"
 )
 
 // FollowUp is a [Broadcast] state machine and encapsulates the logic around
@@ -54,14 +53,20 @@ type FollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
 		Node N
 		Err  error
 	}
+
+	// tracer traces the execution of this state machine. It is supplied by the
+	// pool that created it, since the per-broadcast configuration carries no
+	// telemetry of its own.
+	tracer trace.Tracer
 }
 
 // NewFollowUp initializes a new [FollowUp] struct.
-func NewFollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.QueryID, pool *query.Pool[K, N, M], msg M, cfg *ConfigFollowUp) *FollowUp[K, N, M] {
+func NewFollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.QueryID, pool *query.Pool[K, N, M], msg M, cfg *ConfigFollowUp, tracer trace.Tracer) *FollowUp[K, N, M] {
 	return &FollowUp[K, N, M]{
 		queryID: qid,
 		cfg:     cfg,
 		pool:    pool,
+		tracer:  tracer,
 		msg:     msg,
 		todo:    map[string]N{},
 		waiting: map[string]N{},
@@ -81,9 +86,9 @@ func NewFollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.Que
 // the record for us and emit that instruction instead. Similarly, if we're
 // waiting on responses or are completely finished, we return that as well.
 func (f *FollowUp[K, N, M]) Advance(ctx context.Context, now time.Time, ev BroadcastEvent) (out BroadcastState) {
-	ctx, span := tele.StartSpan(ctx, "FollowUp.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
+	ctx, span := f.tracer.Start(ctx, "FollowUp.Advance", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 
@@ -145,9 +150,9 @@ func (f *FollowUp[K, N, M]) Advance(ctx context.Context, now time.Time, ev Broad
 // a query pool event, in which case this method handles that event and returns
 // nil.
 func (f *FollowUp[K, N, M]) handleEvent(ctx context.Context, ev BroadcastEvent) (out query.PoolEvent) {
-	_, span := tele.StartSpan(ctx, "FollowUp.handleEvent", trace.WithAttributes(tele.AttrInEvent(ev)))
+	_, span := f.tracer.Start(ctx, "FollowUp.handleEvent", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 
@@ -201,9 +206,9 @@ func (f *FollowUp[K, N, M]) handleEvent(ctx context.Context, ev BroadcastEvent) 
 // returned by [FollowUp.handleEvent]. The additional boolean value indicates
 // whether the returned [BroadcastState] should be ignored.
 func (f *FollowUp[K, N, M]) advancePool(ctx context.Context, now time.Time, ev query.PoolEvent) (out BroadcastState, term bool) {
-	ctx, span := tele.StartSpan(ctx, "FollowUp.advanceQuery", trace.WithAttributes(tele.AttrInEvent(ev)))
+	ctx, span := f.tracer.Start(ctx, "FollowUp.advanceQuery", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 

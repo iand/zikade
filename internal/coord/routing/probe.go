@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/probe-lab/zikade/errs"
-	"github.com/probe-lab/zikade/tele"
+	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
 type RoutingTableCpl[K kad.Key[K], N kad.NodeID[K]] interface {
@@ -140,8 +140,8 @@ func (cfg *ProbeConfig) Validate() error {
 // Options may be overridden before passing to NewProbe
 func DefaultProbeConfig() *ProbeConfig {
 	return &ProbeConfig{
-		Tracer: tele.NoopTracer(),
-		Meter:  tele.NoopMeter(),
+		Tracer: coordt.NoopTracer(),
+		Meter:  coordt.NoopMeter(),
 
 		Concurrency:   3,             // MAGIC
 		Timeout:       time.Minute,   // MAGIC
@@ -205,11 +205,11 @@ func NewProbe[K kad.Key[K], N kad.NodeID[K]](rt RoutingTableCpl[K, N], cfg *Prob
 
 // Advance advances the state of the probe state machine by attempting to advance its query if running.
 func (p *Probe[K, N]) Advance(ctx context.Context, now time.Time, ev ProbeEvent) (out ProbeState) {
-	_, span := p.cfg.Tracer.Start(ctx, "Probe.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
+	_, span := p.cfg.Tracer.Start(ctx, "Probe.Advance", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
 		// update the pending count so gauge can read it asynchronously
 		p.pendingCount.Store(int64(p.nvl.pendingCount()))
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 

@@ -64,17 +64,14 @@ var pendingImports = map[string][]string{
 	},
 	"internal/coord/query": {
 		"github.com/probe-lab/zikade/errs",
-		"github.com/probe-lab/zikade/tele",
 		"github.com/stretchr/testify/require",
 	},
 	"internal/coord/routing": {
 		"github.com/probe-lab/zikade/errs",
-		"github.com/probe-lab/zikade/tele",
 		"github.com/stretchr/testify/assert",
 		"github.com/stretchr/testify/require",
 	},
 	"internal/coord/brdcst": {
-		"github.com/probe-lab/zikade/tele",
 		"github.com/stretchr/testify/assert",
 		"github.com/stretchr/testify/require",
 	},
@@ -85,7 +82,6 @@ var pendingImports = map[string][]string{
 		"github.com/probe-lab/zikade/pb",
 	},
 	"internal/kadtest": {
-		"github.com/probe-lab/zikade/tele",
 		"github.com/stretchr/testify/assert",
 		"github.com/stretchr/testify/require",
 	},

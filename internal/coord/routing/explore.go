@@ -16,7 +16,6 @@ import (
 	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/query"
-	"github.com/probe-lab/zikade/tele"
 )
 
 // ExploreQueryID is the id for the query operated by the explore process
@@ -149,8 +148,8 @@ func (cfg *ExploreConfig) Validate() error {
 // Options may be overridden before passing to [NewExplore].
 func DefaultExploreConfig() *ExploreConfig {
 	return &ExploreConfig{
-		Tracer: tele.NoopTracer(),
-		Meter:  tele.NoopMeter(),
+		Tracer: coordt.NoopTracer(),
+		Meter:  coordt.NoopMeter(),
 
 		Timeout:            10 * time.Minute, // MAGIC
 		RequestConcurrency: 3,                // MAGIC
@@ -221,10 +220,10 @@ func NewExplore[K kad.Key[K], N kad.NodeID[K]](self N, rt RoutingTableCpl[K, N],
 
 // Advance advances the state of the explore by attempting to advance its query if running.
 func (e *Explore[K, N]) Advance(ctx context.Context, now time.Time, ev ExploreEvent) (out ExploreState) {
-	ctx, span := e.cfg.Tracer.Start(ctx, "Explore.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
+	ctx, span := e.cfg.Tracer.Start(ctx, "Explore.Advance", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
 		e.running.Store(e.qry != nil)
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 

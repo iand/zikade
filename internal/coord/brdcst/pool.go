@@ -10,7 +10,6 @@ import (
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/query"
-	"github.com/probe-lab/zikade/tele"
 )
 
 // Broadcast is a type alias for a specific kind of state machine that any
@@ -57,7 +56,11 @@ func NewPool[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, cfg *Confi
 		return nil, fmt.Errorf("validate pool config: %w", err)
 	}
 
-	qp, err := query.NewPool[K, N, M](self, cfg.pCfg)
+	// The query pool traces through the same tracer as the broadcast pool that owns it.
+	qpCfg := *cfg.pCfg
+	qpCfg.Tracer = cfg.Tracer
+
+	qp, err := query.NewPool[K, N, M](self, &qpCfg)
 	if err != nil {
 		return nil, fmt.Errorf("new query pool: %w", err)
 	}
@@ -76,9 +79,9 @@ func NewPool[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, cfg *Confi
 // there's no corresponding broadcast event ([EventPoolPoll] for example) don't
 // do anything and instead try to advance the other broadcast state machines.
 func (p *Pool[K, N, M]) Advance(ctx context.Context, now time.Time, ev PoolEvent) (out PoolState) {
-	ctx, span := tele.StartSpan(ctx, "Pool.Advance", trace.WithAttributes(tele.AttrInEvent(ev)))
+	ctx, span := p.cfg.Tracer.Start(ctx, "Pool.Advance", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 
@@ -110,9 +113,9 @@ func (p *Pool[K, N, M]) Advance(ctx context.Context, now time.Time, ev PoolEvent
 // an unknown query or the event doesn't need to be forwarded to the state
 // machine.
 func (p *Pool[K, N, M]) handleEvent(ctx context.Context, ev PoolEvent) (sm Broadcast, out BroadcastEvent) {
-	_, span := tele.StartSpan(ctx, "Pool.handleEvent", trace.WithAttributes(tele.AttrInEvent(ev)))
+	_, span := p.cfg.Tracer.Start(ctx, "Pool.handleEvent", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 
@@ -121,9 +124,9 @@ func (p *Pool[K, N, M]) handleEvent(ctx context.Context, ev PoolEvent) (sm Broad
 		// first initialize the state machine for the broadcast desired strategy
 		switch cfg := ev.Config.(type) {
 		case *ConfigFollowUp:
-			p.bcs[ev.QueryID] = NewFollowUp[K, N, M](ev.QueryID, p.qp, ev.Message, cfg)
+			p.bcs[ev.QueryID] = NewFollowUp[K, N, M](ev.QueryID, p.qp, ev.Message, cfg, p.cfg.Tracer)
 		case *ConfigStatic:
-			p.bcs[ev.QueryID] = NewStatic[K, N, M](ev.QueryID, ev.Message, cfg)
+			p.bcs[ev.QueryID] = NewStatic[K, N, M](ev.QueryID, ev.Message, cfg, p.cfg.Tracer)
 		case *ConfigOptimistic:
 			panic("implement me")
 		}
@@ -177,7 +180,7 @@ func (p *Pool[K, N, M]) handleEvent(ctx context.Context, ev PoolEvent) (sm Broad
 // [Static]) and returns the new [Pool] state ([PoolState]). The additional
 // boolean value indicates whether the returned [PoolState] should be ignored.
 func (p *Pool[K, N, M]) advanceBroadcast(ctx context.Context, now time.Time, sm Broadcast, bev BroadcastEvent) (PoolState, bool) {
-	ctx, span := tele.StartSpan(ctx, "Pool.advanceBroadcast", trace.WithAttributes(tele.AttrInEvent(bev)))
+	ctx, span := p.cfg.Tracer.Start(ctx, "Pool.advanceBroadcast", trace.WithAttributes(coordt.AttrInEvent(bev)))
 	defer span.End()
 
 	state := sm.Advance(ctx, now, bev)
