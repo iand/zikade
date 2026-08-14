@@ -231,6 +231,9 @@ func (in *Include[K, N]) Advance(ctx context.Context, now time.Time, ev IncludeE
 		span.RecordError(tev.Error)
 		delete(in.checks, key.HexString(tev.NodeID.Key()))
 
+	case *EventIncludeConnectivityCheckDropped[K, N]:
+		delete(in.checks, key.HexString(tev.NodeID.Key()))
+
 	case *EventIncludePoll:
 		// ignore, nothing to do
 	default:
@@ -414,8 +417,15 @@ type EventIncludeConnectivityCheckFailure[K kad.Key[K], N kad.NodeID[K]] struct 
 	Error  error // the error that caused the failure, if any
 }
 
+// EventIncludeConnectivityCheckDropped notifies an [Include] that a requested connectivity check was
+// never sent, so nothing was learned about the node.
+type EventIncludeConnectivityCheckDropped[K kad.Key[K], N kad.NodeID[K]] struct {
+	NodeID N // the node the message would have been sent to
+}
+
 // includeEvent() ensures that only events accepted by an [Include] can be assigned to the [IncludeEvent] interface.
 func (*EventIncludePoll) includeEvent()                           {}
 func (*EventIncludeAddCandidate[K, N]) includeEvent()             {}
 func (*EventIncludeConnectivityCheckSuccess[K, N]) includeEvent() {}
 func (*EventIncludeConnectivityCheckFailure[K, N]) includeEvent() {}
+func (*EventIncludeConnectivityCheckDropped[K, N]) includeEvent() {}

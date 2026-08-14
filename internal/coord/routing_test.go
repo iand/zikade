@@ -637,3 +637,55 @@ func TestRoutingExploreGetClosestNodesFailure(t *testing.T) {
 	require.Equal(t, peer.ID(nodes[1].NodeID), peer.ID(rev.NodeID))
 	require.Equal(t, failure, rev.Error)
 }
+
+// TestRoutingProbeKeepsNodeWhenCheckDropped checks that a connectivity check the network
+// behaviour had no capacity for leaves the node in the routing table.
+func TestRoutingProbeKeepsNodeWhenCheckDropped(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := kadtest.CtxBubble(t)
+
+		_, nodes, err := nettest.LinearTopology(4, clock.New())
+		require.NoError(t, err)
+
+		self := nodes[0].NodeID
+		rt := nodes[0].RoutingTable
+
+		probeCfg := routing.DefaultProbeConfig()
+
+		// the check has to fall due inside the test's own deadline
+		probeCfg.CheckInterval = 2 * time.Second
+
+		probe, err := routing.NewProbe[kadt.Key](rt, probeCfg)
+		require.NoError(t, err)
+
+		routingBehaviour, err := ComposeRoutingBehaviour(self, idleBootstrap(), idleInclude(), probe, idleExplore(), DefaultRoutingConfig())
+		require.NoError(t, err)
+
+		// the linear topology puts the second node in the first node's routing table
+		checked := nodes[1].NodeID
+		routingBehaviour.Notify(ctx, &EventRoutingUpdated{NodeID: checked})
+		DrainBehaviour(t, ctx, routingBehaviour)
+
+		// advance past the check interval so a connectivity check falls due
+		time.Sleep(probeCfg.CheckInterval)
+
+		dev, ok := routingBehaviour.Perform(ctx)
+		require.True(t, ok)
+		require.IsType(t, &EventOutboundGetCloserNodes{}, dev)
+
+		oev := dev.(*EventOutboundGetCloserNodes)
+		require.Equal(t, ProbeQueryID, oev.QueryID)
+		require.Equal(t, checked, oev.To)
+
+		oev.Notify.Notify(ctx, &EventGetCloserNodesFailure{
+			QueryID: oev.QueryID,
+			To:      oev.To,
+			Target:  oev.Target,
+			Err:     ErrRequestDropped,
+		})
+		DrainBehaviour(t, ctx, routingBehaviour)
+
+		_, found := rt.GetNode(checked.Key())
+		require.True(t, found, "node was removed from the routing table")
+	})
+}

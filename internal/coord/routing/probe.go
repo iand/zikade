@@ -268,6 +268,19 @@ func (p *Probe[K, N]) Advance(ctx context.Context, now time.Time, ev ProbeEvent)
 		return &StateProbeNodeFailure[K, N]{
 			NodeID: tev.NodeID,
 		}
+	case *EventProbeConnectivityCheckDropped[K, N]:
+		span.SetAttributes(attribute.String("nodeid", tev.NodeID.String()))
+		nv, found := p.nvl.Get(tev.NodeID)
+		if !found {
+			// ignore message for unknown node, which might have been removed
+			span.RecordError(errors.New("node not in node value list"))
+			break
+		}
+		nv.NextCheckDue = now.Add(p.cfg.CheckInterval)
+
+		// put into list, which will clear any ongoing check too
+		p.nvl.Put(nv)
+
 	case *EventProbeNotifyConnectivity[K, N]:
 		span.SetAttributes(attribute.String("nodeid", tev.NodeID.String()))
 		nv, found := p.nvl.Get(tev.NodeID)
@@ -392,6 +405,12 @@ type EventProbeConnectivityCheckFailure[K kad.Key[K], N kad.NodeID[K]] struct {
 	Error  error // the error that caused the failure, if any
 }
 
+// EventProbeConnectivityCheckDropped notifies a [Probe] that a requested connectivity check was
+// never sent, so nothing was learned about the node.
+type EventProbeConnectivityCheckDropped[K kad.Key[K], N kad.NodeID[K]] struct {
+	NodeID N // the node the message would have been sent to
+}
+
 // EventProbeNotifyConnectivity notifies a probe that a node has confirmed connectivity from another source such as a query.
 type EventProbeNotifyConnectivity[K kad.Key[K], N kad.NodeID[K]] struct {
 	NodeID N
@@ -403,6 +422,7 @@ func (*EventProbeAdd[K, N]) probeEvent()                      {}
 func (*EventProbeRemove[K, N]) probeEvent()                   {}
 func (*EventProbeConnectivityCheckSuccess[K, N]) probeEvent() {}
 func (*EventProbeConnectivityCheckFailure[K, N]) probeEvent() {}
+func (*EventProbeConnectivityCheckDropped[K, N]) probeEvent() {}
 func (*EventProbeNotifyConnectivity[K, N]) probeEvent()       {}
 
 type nodeValue[K kad.Key[K], N kad.NodeID[K]] struct {

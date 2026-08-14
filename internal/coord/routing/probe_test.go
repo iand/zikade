@@ -952,3 +952,53 @@ func TestProbeReportsNextDueWithSpareCapacity(t *testing.T) {
 	require.IsType(t, &StateProbeWaitingWithCapacity{}, state)
 	require.Equal(t, now.Add(cfg.Timeout), state.(*StateProbeWaitingWithCapacity).NextDue)
 }
+
+// TestProbeConnectivityCheckDropped checks that a connectivity check which was never sent
+// leaves the node in the routing table and is not left open to time out.
+func TestProbeConnectivityCheckDropped(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+
+	cfg := DefaultProbeConfig()
+	cfg.CheckInterval = 10 * time.Minute
+
+	rt, err := triert.New[tiny.Key, tiny.Node](tiny.NewNode(128), nil)
+	require.NoError(t, err)
+	rt.AddNode(tiny.NewNode(4))
+
+	sm, err := NewProbe[tiny.Key, tiny.Node](rt, cfg)
+	require.NoError(t, err)
+
+	state := sm.Advance(ctx, now, &EventProbeAdd[tiny.Key, tiny.Node]{
+		NodeID: tiny.NewNode(4),
+	})
+	require.IsType(t, &StateProbeIdle{}, state)
+
+	now = now.Add(cfg.CheckInterval)
+	state = sm.Advance(ctx, now, &EventProbePoll{})
+	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
+
+	st := state.(*StateProbeConnectivityCheck[tiny.Key, tiny.Node])
+
+	state = sm.Advance(ctx, now, &EventProbeConnectivityCheckDropped[tiny.Key, tiny.Node]{
+		NodeID: st.NodeID,
+	})
+	require.IsType(t, &StateProbeIdle{}, state)
+
+	// the node keeps its place in the routing table
+	_, found := rt.GetNode(tiny.Key(4))
+	require.True(t, found)
+
+	// the check that was not sent is not left to time out
+	now = now.Add(cfg.Timeout * 2)
+	state = sm.Advance(ctx, now, &EventProbePoll{})
+	require.IsType(t, &StateProbeIdle{}, state)
+
+	_, found = rt.GetNode(tiny.Key(4))
+	require.True(t, found)
+
+	// the node is checked again once its next check falls due
+	now = now.Add(cfg.CheckInterval)
+	state = sm.Advance(ctx, now, &EventProbePoll{})
+	require.IsType(t, &StateProbeConnectivityCheck[tiny.Key, tiny.Node]{}, state)
+}

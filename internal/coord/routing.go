@@ -2,6 +2,7 @@ package coord
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -691,17 +692,27 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 			return r.advanceBootstrap(ctx, now, cmd)
 
 		case IncludeQueryID:
-			cmd := &routing.EventIncludeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
+			var cmd routing.IncludeEvent = &routing.EventIncludeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
 				NodeID: ev.To,
 				Error:  ev.Err,
+			}
+			if errors.Is(ev.Err, ErrRequestDropped) {
+				cmd = &routing.EventIncludeConnectivityCheckDropped[kadt.Key, kadt.PeerID]{
+					NodeID: ev.To,
+				}
 			}
 			// attempt to advance the include state machine
 			return r.advanceInclude(ctx, now, cmd)
 
 		case ProbeQueryID:
-			cmd := &routing.EventProbeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
+			var cmd routing.ProbeEvent = &routing.EventProbeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
 				NodeID: ev.To,
 				Error:  ev.Err,
+			}
+			if errors.Is(ev.Err, ErrRequestDropped) {
+				cmd = &routing.EventProbeConnectivityCheckDropped[kadt.Key, kadt.PeerID]{
+					NodeID: ev.To,
+				}
 			}
 			// attempt to advance the probe state machine
 			return r.advanceProbe(ctx, now, cmd)
