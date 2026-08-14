@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -38,6 +39,10 @@ type NetworkConfig struct {
 	// PeerCapacity is the maximum number of requests that may be queued or in flight for
 	// any one peer.
 	PeerCapacity int
+
+	// IdleTimeout is how long an unused node handler is kept before it is evicted and the
+	// goroutine it uses to send messages is released.
+	IdleTimeout time.Duration
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
@@ -77,6 +82,13 @@ func (cfg *NetworkConfig) Validate() error {
 		}
 	}
 
+	if cfg.IdleTimeout < 1 {
+		return &errs.ConfigurationError{
+			Component: "NetworkConfig",
+			Err:       fmt.Errorf("idle timeout must be greater than zero"),
+		}
+	}
+
 	return nil
 }
 
@@ -85,8 +97,9 @@ func DefaultNetworkConfig() *NetworkConfig {
 		Logger:       tele.DefaultLogger("coord"),
 		Tracer:       tele.NoopTracer(),
 		Meter:        tele.NoopMeter(),
-		Capacity:     256, // MAGIC
-		PeerCapacity: 3,   // MAGIC
+		Capacity:     256,         // MAGIC
+		PeerCapacity: 3,           // MAGIC
+		IdleTimeout:  time.Minute, // MAGIC
 	}
 }
 
@@ -182,7 +195,7 @@ func (b *NetworkBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
 
 	switch ev := ev.(type) {
 	case *EventOutboundGetCloserNodes:
-		if !b.handler(ev.To).Notify(ctx, ev) {
+		if !b.notifyHandler(ctx, ev.To, ev) {
 			b.counterRequestsDropped.Add(ctx, 1)
 			b.logger.Debug("dropped request to find closer nodes", tele.LogAttrPeerID(ev.To))
 			if ev.Notify != nil {
@@ -195,7 +208,7 @@ func (b *NetworkBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
 			}
 		}
 	case *EventOutboundSendMessage:
-		if !b.handler(ev.To).Notify(ctx, ev) {
+		if !b.notifyHandler(ctx, ev.To, ev) {
 			b.counterRequestsDropped.Add(ctx, 1)
 			b.logger.Debug("dropped request to send message", tele.LogAttrPeerID(ev.To))
 			if ev.Notify != nil {
@@ -222,17 +235,37 @@ func (b *NetworkBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
 	}
 }
 
-// handler returns the node handler for a peer, creating it if there is not one already.
-func (b *NetworkBehaviour) handler(to kadt.PeerID) *NodeHandler {
+// notifyHandler gives a request to the node handler for a peer, creating the handler if
+// there is not one already, and reports whether the handler accepted it. The handler map
+// lock is held across the hand-over so that a handler cannot be evicted between being
+// chosen and being given the request.
+func (b *NetworkBehaviour) notifyHandler(ctx context.Context, to kadt.PeerID, ev NodeHandlerRequest) bool {
 	b.nodeHandlersMu.Lock()
 	defer b.nodeHandlersMu.Unlock()
 
 	nh, ok := b.nodeHandlers[to]
 	if !ok {
-		nh = NewNodeHandler(to, b.rtr, b.slots, b.cfg.PeerCapacity, b.logger, b.tracer)
+		nh = NewNodeHandler(to, b.rtr, b.slots, &b.cfg, b.evictIdle)
 		b.nodeHandlers[to] = nh
 	}
-	return nh
+	return nh.Notify(ctx, ev)
+}
+
+// evictIdle removes and closes a node handler that has been idle for its timeout, reporting
+// whether it was removed. It refuses a handler that is no longer the handler for its peer,
+// and one that has taken on a request since the timeout expired.
+func (b *NetworkBehaviour) evictIdle(h *NodeHandler) bool {
+	b.nodeHandlersMu.Lock()
+	defer b.nodeHandlersMu.Unlock()
+
+	if b.nodeHandlers[h.self] != h || !h.idle() {
+		return false
+	}
+
+	delete(b.nodeHandlers, h.self)
+	h.Close()
+
+	return true
 }
 
 func (b *NetworkBehaviour) Ready() <-chan struct{} {
@@ -280,7 +313,6 @@ func (b *NetworkBehaviour) Close() {
 type NodeHandler struct {
 	self   kadt.PeerID
 	rtr    coordt.Router[kadt.Key, kadt.PeerID, *pb.Message]
-	logger *slog.Logger
 	tracer trace.Tracer
 
 	// slots is the capacity shared with every other node handler, and peerSlots the
@@ -292,20 +324,30 @@ type NodeHandler struct {
 	// pending holds the accepted requests that have not been sent yet
 	pending chan CtxEvent[NodeHandlerRequest]
 
+	// idleTimeout is how long the handler waits with nothing outstanding before offering
+	// itself to onIdle, which reports whether the handler was removed.
+	idleTimeout time.Duration
+	onIdle      func(*NodeHandler) bool
+
 	stop     chan struct{}
 	stopOnce sync.Once
+
+	// done is closed when the handler's goroutine has exited.
+	done chan struct{}
 }
 
-func NewNodeHandler(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *pb.Message], slots *slots, capacity int, logger *slog.Logger, tracer trace.Tracer) *NodeHandler {
+func NewNodeHandler(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *pb.Message], slots *slots, cfg *NetworkConfig, onIdle func(*NodeHandler) bool) *NodeHandler {
 	h := &NodeHandler{
-		self:      self,
-		rtr:       rtr,
-		logger:    logger,
-		tracer:    tracer,
-		slots:     slots,
-		peerSlots: newSlots(capacity),
-		pending:   make(chan CtxEvent[NodeHandlerRequest], capacity),
-		stop:      make(chan struct{}),
+		self:        self,
+		rtr:         rtr,
+		tracer:      cfg.Tracer,
+		slots:       slots,
+		peerSlots:   newSlots(cfg.PeerCapacity),
+		pending:     make(chan CtxEvent[NodeHandlerRequest], cfg.PeerCapacity),
+		idleTimeout: cfg.IdleTimeout,
+		onIdle:      onIdle,
+		stop:        make(chan struct{}),
+		done:        make(chan struct{}),
 	}
 
 	go h.run()
@@ -313,8 +355,15 @@ func NewNodeHandler(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 	return h
 }
 
-// run sends the accepted requests in turn until the handler is closed.
+// run sends the accepted requests in turn until the handler is closed or is evicted for
+// being idle.
 func (h *NodeHandler) run() {
+	defer close(h.done)
+
+	// Since Go 1.23 a fired timer leaves no value behind, so Reset alone rearms it.
+	idle := time.NewTimer(h.idleTimeout)
+	defer idle.Stop()
+
 	for {
 		select {
 		case <-h.stop:
@@ -324,8 +373,20 @@ func (h *NodeHandler) run() {
 				h.send(ce.Ctx, ce.Event)
 			}
 			h.release()
+			idle.Reset(h.idleTimeout)
+		case <-idle.C:
+			if h.onIdle != nil && h.onIdle(h) {
+				return
+			}
+			idle.Reset(h.idleTimeout)
 		}
 	}
+}
+
+// idle reports whether every request the handler accepted has been sent or discarded. A
+// request holds one of the handler's own slots until then.
+func (h *NodeHandler) idle() bool {
+	return len(h.peerSlots.tokens) == 0
 }
 
 // Notify accepts a request to be sent to the handler's peer, reporting whether capacity was
