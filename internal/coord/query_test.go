@@ -431,8 +431,9 @@ func TestQueryTimeoutUnblocksWaitForQuery(t *testing.T) {
 	require.ErrorIs(t, waitErr, coordt.ErrQueryTimeout)
 }
 
+// TestQuery_deadlock_regression checks that a waiter which is slow to consume query events
+// does not deadlock against the behaviour producing them.
 func TestQuery_deadlock_regression(t *testing.T) {
-	t.Skip()
 	ctx := kadtest.CtxShort(t)
 	msg := &pb.Message{}
 	queryID := coordt.QueryID("test")
@@ -463,12 +464,13 @@ func TestQuery_deadlock_regression(t *testing.T) {
 	waiter := NewQueryWaiter(5)
 	wrappedWaiter := NewQueryMonitorHook[*EventQueryFinished](waiter)
 
+	var waitErr error
 	waiterDone := make(chan struct{})
 	waiterMsg := make(chan struct{})
 	go func() {
 		defer close(waiterDone)
 		defer close(waiterMsg)
-		_, _, err = c.waitForQuery(ctx, queryID, waiter, func(ctx context.Context, id kadt.PeerID, resp *pb.Message, stats coordt.QueryStats) error {
+		_, _, waitErr = c.waitForQuery(ctx, queryID, waiter, func(ctx context.Context, id kadt.PeerID, resp *pb.Message, stats coordt.QueryStats) error {
 			waiterMsg <- struct{}{}
 			return coordt.ErrSkipRemaining
 		})
@@ -496,46 +498,55 @@ func TestQuery_deadlock_regression(t *testing.T) {
 	// Because we're blocking on the waiterMsg channel in the waitForQuery
 	// method above, we simulate a slow receiving waiter.
 
-	// Advance the query pool state machine. Because we returned a new node
-	// above, the query pool state machine wants to send another outbound query
-	ev, _ = c.queryBehaviour.Perform(ctx)
-	require.IsType(t, &EventAddNode{}, ev) // event to notify the routing table
-	ev, _ = c.queryBehaviour.Perform(ctx)
-	require.IsType(t, &EventOutboundSendMessage{}, ev)
+	// Advance the query pool state machine. Because we returned a new node above,
+	// the query pool state machine wants to send another outbound query, and the
+	// behaviour has queued an event to notify the routing table of the new node.
+	// The order the two are returned in does not matter here.
+	var addNode, sendMessage int
+	for range 2 {
+		ev, ok := c.queryBehaviour.Perform(ctx)
+		require.True(t, ok)
+		switch ev.(type) {
+		case *EventAddNode:
+			addNode++
+		case *EventOutboundSendMessage:
+			sendMessage++
+		default:
+			t.Fatalf("unexpected event %T", ev)
+		}
+	}
+	require.Equal(t, 1, addNode)
+	require.Equal(t, 1, sendMessage)
 
-	hasLock := make(chan struct{})
+	notifiedWhileBusy := make(chan struct{})
 	var once sync.Once
 	wrappedWaiter.BeforeProgressed = func() {
 		once.Do(func() {
-			close(hasLock)
+			close(notifiedWhileBusy)
 		})
 	}
 
 	// Simulate a successful response from the new node. This node didn't return
-	// any new nodes to contact. This means the query pool behaviour will notify
-	// the waiter about a query progression and afterward about a finished
-	// query. Because (at the time of writing) the waiter has a channel buffer
-	// of 1, the channel cannot hold both events. At the same time, the waiter
-	// doesn't consume the messages because it's busy processing the previous
-	// query event (because we haven't released the blocking waiterMsg call above).
-	go c.queryBehaviour.Notify(ctx, successMsg(nodes[2].NodeID))
+	// any new nodes to contact, so the behaviour notifies the waiter that the
+	// query progressed and then that it finished, while the waiter is still
+	// blocked in the callback for the previous progress event.
+	c.queryBehaviour.Notify(ctx, successMsg(nodes[2].NodeID))
 
-	// wait until the above Notify call was handled by waiting until the hasLock
-	// channel was closed in the above BeforeNotify hook. If that hook is called
-	// we can be sure that the above Notify call has acquired the polled query
-	// behaviour's pendingMu lock.
-	kadtest.AssertClosed(t, ctx, hasLock)
+	for {
+		if _, ok := c.queryBehaviour.Perform(ctx); !ok {
+			break
+		}
+	}
 
-	// Since we know that the pooled query behaviour holds the lock we can
-	// release the slow waiter by reading an item from the waiterMsg channel.
+	// the behaviour notified the waiter without waiting for it to be ready
+	kadtest.AssertClosed(t, ctx, notifiedWhileBusy)
+
+	// release the slow waiter, whose callback returns coordt.ErrSkipRemaining and
+	// so notifies the behaviour to stop the query
 	kadtest.ReadItem(t, ctx, waiterMsg)
 
-	// At this point, the waitForQuery QueryFunc callback returned a
-	// coordt.ErrSkipRemaining. This instructs the waitForQuery method to notify
-	// the query behaviour with an EventStopQuery event. However, because the
-	// query behaviour is busy sending a message to the waiter it is holding the
-	// lock on the pending events to process. Therefore, this notify call will
-	// also block. At the same time, the waiter cannot read the new messages
-	// from the query behaviour because it tries to notify it.
+	// the waiter returns rather than deadlocking against the behaviour, which
+	// would happen if either direction waited for the other
 	kadtest.AssertClosed(t, ctx, waiterDone)
+	require.NoError(t, waitErr)
 }

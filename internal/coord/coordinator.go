@@ -506,7 +506,15 @@ func (c *Coordinator) waitForQuery(ctx context.Context, queryID coordt.QueryID, 
 					Success:  ev.Stats.Success,
 					Failure:  ev.Stats.Failure,
 				}
-				if err := fn(ctx, ev.NodeID, ev.Response, lastStats); err != nil {
+				err := fn(ctx, ev.NodeID, ev.Response, lastStats)
+				if errors.Is(err, coordt.ErrSkipRemaining) {
+					// the caller has seen all it wants to, so stop offering nodes and
+					// report the outcome of the query as usual
+					c.cfg.Logger.Debug("query done", "query_id", queryID)
+					break
+				}
+				if err != nil {
+					// user defined error that terminates the query
 					return nil, lastStats, err
 				}
 			}
