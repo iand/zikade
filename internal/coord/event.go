@@ -220,6 +220,10 @@ func (*EventRoutingRemoved) routingNotification() {}
 // running to completion or by being canceled.
 type EventBootstrapFinished struct {
 	Stats query.QueryStats
+
+	// Err records why the bootstrap ended when it ended for a reason other than visiting
+	// every node it could, and is nil otherwise.
+	Err error
 }
 
 func (*EventBootstrapFinished) behaviourEvent()      {}

@@ -451,3 +451,49 @@ func TestBootstrapReportsOwnDeadlineWhenSooner(t *testing.T) {
 	require.IsType(t, &StateBootstrapWaiting{}, state)
 	require.Equal(t, now.Add(cfg.Timeout), state.(*StateBootstrapWaiting).NextDue)
 }
+
+// TestBootstrapTimeoutReleasesQuery checks that a bootstrap which passes its own deadline
+// gives up the query it was running, so that it returns to idle and a later start begins
+// a fresh bootstrap.
+func TestBootstrapTimeoutReleasesQuery(t *testing.T) {
+	ctx := context.Background()
+	now := epoch
+	cfg := DefaultBootstrapConfig()
+
+	// the bootstrap must give up before the request it is waiting on does, otherwise the
+	// query ends by running out of nodes rather than out of time
+	cfg.Timeout = time.Minute
+	cfg.RequestTimeout = time.Hour
+
+	self := tiny.NewNode(0)
+	bs, err := NewBootstrap[tiny.Key](self, cfg)
+	require.NoError(t, err)
+
+	a := tiny.NewNode(4)
+	b := tiny.NewNode(8)
+
+	state := bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
+		KnownClosestNodes: []tiny.Node{b},
+	})
+	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
+
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
+	require.IsType(t, &StateBootstrapWaiting{}, state)
+
+	// advance past the bootstrap deadline but not past the request deadline
+	now = now.Add(2 * cfg.Timeout)
+
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
+	require.IsType(t, &StateBootstrapTimeout{}, state)
+
+	// the timed out query has been released, so the bootstrap is no longer running
+	state = bs.Advance(ctx, now, &EventBootstrapPoll{})
+	require.IsType(t, &StateBootstrapIdle{}, state)
+
+	// a later start begins a fresh bootstrap rather than resuming the timed out one
+	state = bs.Advance(ctx, now, &EventBootstrapStart[tiny.Key, tiny.Node]{
+		KnownClosestNodes: []tiny.Node{a},
+	})
+	require.IsType(t, &StateBootstrapFindCloser[tiny.Key, tiny.Node]{}, state)
+	require.Equal(t, a, state.(*StateBootstrapFindCloser[tiny.Key, tiny.Node]).NodeID)
+}

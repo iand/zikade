@@ -363,3 +363,37 @@ func TestCoordinatorExploresOnSchedule(t *testing.T) {
 		require.Equal(t, []kadt.PeerID{nodes[1].NodeID}, rtr.contacts())
 	})
 }
+
+// TestCoordinatorBootstrapTimesOut checks that a bootstrap whose seed node never answers
+// ends with a timeout error rather than ending silently.
+func TestCoordinatorBootstrapTimesOut(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := kadtest.CtxBubble(t)
+
+		_, nodes, err := nettest.LinearTopology(2, clock.New())
+		require.NoError(t, err)
+
+		ccfg := DefaultCoordinatorConfig()
+
+		// the bootstrap must give up before the request it is waiting on does, otherwise
+		// the query ends by running out of nodes rather than out of time
+		ccfg.Routing.BootstrapTimeout = 2 * time.Second
+		ccfg.Routing.BootstrapRequestTimeout = time.Minute
+
+		rtr := &silentRouter{}
+
+		c, err := NewCoordinator(nodes[0].NodeID, rtr, nodes[0].RoutingTable, ccfg)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, c.Close()) })
+
+		rn := NewBufferedRoutingNotifier()
+		c.SetRoutingNotifier(rn)
+
+		err = c.Bootstrap(ctx, []kadt.PeerID{nodes[1].NodeID})
+		require.NoError(t, err)
+
+		ev, err := rn.Expect(ctx, &EventBootstrapFinished{})
+		require.NoError(t, err)
+		require.ErrorIs(t, ev.(*EventBootstrapFinished).Err, coordt.ErrQueryTimeout)
+	})
+}

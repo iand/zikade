@@ -780,10 +780,12 @@ func (r *RoutingBehaviour) advanceBootstrap(ctx context.Context, now time.Time, 
 			Stats: st.Stats,
 		}, true
 	case *routing.StateBootstrapTimeout:
-		// the bootstrap does not release its query when it passes its deadline, so it
-		// reports this state again on every advance and no due time is recorded
 		r.cfg.Logger.Debug("bootstrap timed out", slog.Int("requests", st.Stats.Requests), slog.Int("failures", st.Stats.Failure))
 		r.bootstrapDue = time.Time{}
+		return &EventBootstrapFinished{
+			Stats: st.Stats,
+			Err:   coordt.ErrQueryTimeout,
+		}, true
 	case *routing.StateBootstrapIdle:
 		// bootstrap not running, nothing to do
 		r.bootstrapDue = time.Time{}

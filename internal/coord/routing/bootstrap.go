@@ -254,6 +254,7 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, now time.Time, qev q
 		if now.After(st.Deadline) {
 			b.counterFindFailed.Add(ctx, 1)
 			span.SetAttributes(attribute.String("out_state", "StateBootstrapTimeout"))
+			b.qry = nil
 			return &StateBootstrapTimeout{
 				Stats: st.Stats,
 			}
@@ -267,6 +268,7 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, now time.Time, qev q
 		if now.After(st.Deadline) {
 			b.counterFindFailed.Add(ctx, 1)
 			span.SetAttributes(attribute.String("out_state", "StateBootstrapTimeout"))
+			b.qry = nil
 			return &StateBootstrapTimeout{
 				Stats: st.Stats,
 			}
