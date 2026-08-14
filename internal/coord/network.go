@@ -13,7 +13,6 @@ import (
 
 	"github.com/ipfs/go-libdht/kad"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
@@ -47,42 +46,42 @@ type NetworkConfig struct {
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *NetworkConfig) Validate() error {
 	if cfg.Logger == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "NetworkConfig",
 			Err:       fmt.Errorf("logger must not be nil"),
 		}
 	}
 
 	if cfg.Tracer == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "NetworkConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
 		}
 	}
 
 	if cfg.Meter == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "NetworkConfig",
 			Err:       fmt.Errorf("meter must not be nil"),
 		}
 	}
 
 	if cfg.Capacity < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "NetworkConfig",
 			Err:       fmt.Errorf("capacity must be greater than zero"),
 		}
 	}
 
 	if cfg.NodeCapacity < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "NetworkConfig",
 			Err:       fmt.Errorf("node capacity must be greater than zero"),
 		}
 	}
 
 	if cfg.IdleTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "NetworkConfig",
 			Err:       fmt.Errorf("idle timeout must be greater than zero"),
 		}

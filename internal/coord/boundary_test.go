@@ -48,16 +48,13 @@ var allowedModules = []string{
 // work, after which both the map and this comment should be deleted.
 var pendingImports = map[string][]string{
 	"internal/coord": {
-		"github.com/probe-lab/zikade/errs",
 		"github.com/stretchr/testify/require",
 		"github.com/stretchr/testify/suite",
 	},
 	"internal/coord/query": {
-		"github.com/probe-lab/zikade/errs",
 		"github.com/stretchr/testify/require",
 	},
 	"internal/coord/routing": {
-		"github.com/probe-lab/zikade/errs",
 		"github.com/stretchr/testify/assert",
 		"github.com/stretchr/testify/require",
 	},

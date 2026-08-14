@@ -11,7 +11,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
@@ -73,35 +72,35 @@ type IncludeConfig struct {
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *IncludeConfig) Validate() error {
 	if cfg.Concurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "IncludeConfig",
 			Err:       fmt.Errorf("concurrency must be greater than zero"),
 		}
 	}
 
 	if cfg.Timeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "IncludeConfig",
 			Err:       fmt.Errorf("timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.QueueCapacity < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "IncludeConfig",
 			Err:       fmt.Errorf("queue size must be greater than zero"),
 		}
 	}
 
 	if cfg.Tracer == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "IncludeConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
 		}
 	}
 
 	if cfg.Meter == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "IncludeConfig",
 			Err:       fmt.Errorf("meter must not be nil"),
 		}

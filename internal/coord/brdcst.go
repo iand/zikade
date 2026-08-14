@@ -13,7 +13,6 @@ import (
 
 	"github.com/ipfs/go-libdht/kad"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
@@ -46,35 +45,35 @@ type BroadcastConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] stru
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *BroadcastConfig[K, N, M]) Validate() error {
 	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "BroadcastConfig",
 			Err:       fmt.Errorf("clock must not be nil"),
 		}
 	}
 
 	if cfg.Logger == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "BroadcastConfig",
 			Err:       fmt.Errorf("logger must not be nil"),
 		}
 	}
 
 	if cfg.Tracer == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "BroadcastConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
 		}
 	}
 
 	if cfg.Meter == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "BroadcastConfig",
 			Err:       fmt.Errorf("meter must not be nil"),
 		}
 	}
 
 	if cfg.QueueCapacity < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "BroadcastConfig",
 			Err:       fmt.Errorf("queue capacity must be greater than zero"),
 		}

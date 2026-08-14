@@ -14,7 +14,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
@@ -99,35 +98,35 @@ type ProbeConfig struct {
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *ProbeConfig) Validate() error {
 	if cfg.Tracer == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ProbeConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
 		}
 	}
 
 	if cfg.Meter == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ProbeConfig",
 			Err:       fmt.Errorf("meter must not be nil"),
 		}
 	}
 
 	if cfg.Concurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ProbeConfig",
 			Err:       fmt.Errorf("concurrency must be greater than zero"),
 		}
 	}
 
 	if cfg.Timeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ProbeConfig",
 			Err:       fmt.Errorf("timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.CheckInterval < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ProbeConfig",
 			Err:       fmt.Errorf("revisit interval must be greater than zero"),
 		}

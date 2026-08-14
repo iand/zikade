@@ -9,7 +9,6 @@ import (
 	"github.com/ipfs/go-libdht/kad/key"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
@@ -35,31 +34,31 @@ type QueryConfig struct {
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *QueryConfig) Validate() error {
 	if cfg.Concurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "QueryConfig",
 			Err:       fmt.Errorf("concurrency must be greater than zero"),
 		}
 	}
 	if cfg.NumResults < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "QueryConfig",
 			Err:       fmt.Errorf("num results must be greater than zero"),
 		}
 	}
 	if cfg.RequestTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "QueryConfig",
 			Err:       fmt.Errorf("request timeout must be greater than zero"),
 		}
 	}
 	if cfg.Timeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "QueryConfig",
 			Err:       fmt.Errorf("timeout must be greater than zero"),
 		}
 	}
 	if cfg.Tracer == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "QueryConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
 		}

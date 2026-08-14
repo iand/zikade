@@ -8,7 +8,6 @@ import (
 	"github.com/ipfs/go-libdht/kad"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
@@ -40,40 +39,40 @@ type PoolConfig struct {
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *PoolConfig) Validate() error {
 	if cfg.Concurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PoolConfig",
 			Err:       fmt.Errorf("concurrency must be greater than zero"),
 		}
 	}
 	if cfg.Timeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PoolConfig",
 			Err:       fmt.Errorf("timeout must be greater than zero"),
 		}
 	}
 	if cfg.Replication < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PoolConfig",
 			Err:       fmt.Errorf("replication must be greater than zero"),
 		}
 	}
 
 	if cfg.QueryConcurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PoolConfig",
 			Err:       fmt.Errorf("query concurrency must be greater than zero"),
 		}
 	}
 
 	if cfg.RequestTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PoolConfig",
 			Err:       fmt.Errorf("request timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.Tracer == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PoolConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
 		}

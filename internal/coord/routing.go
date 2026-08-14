@@ -15,7 +15,6 @@ import (
 
 	"github.com/ipfs/go-libdht/kad"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/routing"
 )
@@ -119,133 +118,133 @@ type RoutingConfig[K kad.Key[K], N kad.NodeID[K]] struct {
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *RoutingConfig[K, N]) Validate() error {
 	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("clock must not be nil"),
 		}
 	}
 
 	if cfg.Logger == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("logger must not be nil"),
 		}
 	}
 
 	if cfg.Tracer == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
 		}
 	}
 
 	if cfg.Meter == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("meter must not be nil"),
 		}
 	}
 
 	if cfg.QueueCapacity < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("queue capacity must be greater than zero"),
 		}
 	}
 
 	if cfg.BootstrapTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("bootstrap timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.BootstrapRequestConcurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("bootstrap request concurrency must be greater than zero"),
 		}
 	}
 
 	if cfg.BootstrapRequestTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("bootstrap request timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.BootstrapMinimumPopulation < 0 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("bootstrap minimum population must not be negative"),
 		}
 	}
 
 	if cfg.BootstrapMinimumPopulation > 0 && cfg.BootstrapRetryInterval < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("bootstrap retry interval must be greater than zero"),
 		}
 	}
 
 	if cfg.ConnectivityCheckTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("connectivity check timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.ProbeRequestConcurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("probe request concurrency must be greater than zero"),
 		}
 	}
 
 	if cfg.ProbeCheckInterval < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("probe check interval must be greater than zero"),
 		}
 	}
 
 	if cfg.IncludeQueueCapacity < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("include queue capacity must be greater than zero"),
 		}
 	}
 
 	if cfg.IncludeRequestConcurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("include request concurrency must be greater than zero"),
 		}
 	}
 
 	if cfg.ExploreTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("explore timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.ExploreRequestConcurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("explore request concurrency must be greater than zero"),
 		}
 	}
 
 	if cfg.ExploreRequestTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("explore request timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.ExploreMaximumCpl < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("explore maximum cpl must be greater than zero"),
 		}
@@ -254,35 +253,35 @@ func (cfg *RoutingConfig[K, N]) Validate() error {
 	// Exploring a cpl needs a node id that occupies that bucket, and the supplied
 	// [routing.NodeIDForCplFunc] is not required to synthesise one beyond a 15 bit prefix.
 	if cfg.ExploreMaximumCpl > 15 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("explore maximum cpl must be 15 or less"),
 		}
 	}
 
 	if cfg.ExploreInterval < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("explore interval must be greater than zero"),
 		}
 	}
 
 	if cfg.ExploreIntervalMultiplier < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("explore interval multiplier must be one or greater"),
 		}
 	}
 
 	if cfg.ExploreIntervalJitter < 0 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("explore interval jitter must be greater than 0"),
 		}
 	}
 
 	if cfg.ExploreIntervalJitter > 0.05 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("explore interval jitter must be 0.05 or less"),
 		}

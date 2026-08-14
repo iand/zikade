@@ -16,7 +16,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/routing"
@@ -102,28 +101,28 @@ type CoordinatorConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] st
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *CoordinatorConfig[K, N, M]) Validate() error {
 	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "CoordinatorConfig",
 			Err:       fmt.Errorf("clock must not be nil"),
 		}
 	}
 
 	if cfg.Logger == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "CoordinatorConfig",
 			Err:       fmt.Errorf("logger must not be nil"),
 		}
 	}
 
 	if cfg.MeterProvider == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "CoordinatorConfig",
 			Err:       fmt.Errorf("meter provider must not be nil"),
 		}
 	}
 
 	if cfg.TracerProvider == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "CoordinatorConfig",
 			Err:       fmt.Errorf("tracer provider must not be nil"),
 		}
@@ -141,7 +140,7 @@ func (cfg *CoordinatorConfig[K, N, M]) Validate() error {
 		{"Brdcst", cfg.Brdcst.QueueCapacity},
 	} {
 		if c.capacity <= cfg.Network.Capacity {
-			return &errs.ConfigurationError{
+			return &coordt.ConfigurationError{
 				Component: "CoordinatorConfig",
 				Err:       fmt.Errorf("%s queue capacity must be greater than network capacity", c.component),
 			}

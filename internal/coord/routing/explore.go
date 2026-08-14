@@ -13,7 +13,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/query"
 )
@@ -107,35 +106,35 @@ type ExploreConfig struct {
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *ExploreConfig) Validate() error {
 	if cfg.Tracer == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ExploreConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
 		}
 	}
 
 	if cfg.Meter == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ExploreConfig",
 			Err:       fmt.Errorf("meter must not be nil"),
 		}
 	}
 
 	if cfg.Timeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ExploreConfig",
 			Err:       fmt.Errorf("timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.RequestConcurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ExploreConfig",
 			Err:       fmt.Errorf("request concurrency must be greater than zero"),
 		}
 	}
 
 	if cfg.RequestTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "ExploreConfig",
 			Err:       fmt.Errorf("request timeout must be greater than zero"),
 		}

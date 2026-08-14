@@ -13,7 +13,6 @@ import (
 
 	"github.com/ipfs/go-libdht/kad"
 
-	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/query"
 )
@@ -53,62 +52,62 @@ type QueryConfig struct {
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *QueryConfig) Validate() error {
 	if cfg.Clock == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("clock must not be nil"),
 		}
 	}
 
 	if cfg.Logger == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("logger must not be nil"),
 		}
 	}
 
 	if cfg.Tracer == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
 		}
 	}
 
 	if cfg.Meter == nil {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("meter must not be nil"),
 		}
 	}
 
 	if cfg.QueueCapacity < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("queue capacity must be greater than zero"),
 		}
 	}
 
 	if cfg.Concurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("query concurrency must be greater than zero"),
 		}
 	}
 	if cfg.Timeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("query timeout must be greater than zero"),
 		}
 	}
 
 	if cfg.RequestConcurrency < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("request concurrency must be greater than zero"),
 		}
 	}
 
 	if cfg.RequestTimeout < 1 {
-		return &errs.ConfigurationError{
+		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("request timeout must be greater than zero"),
 		}
