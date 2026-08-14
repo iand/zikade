@@ -556,14 +556,15 @@ func (c *Coordinator) AddNodes(ctx context.Context, ids []kadt.PeerID) error {
 	return nil
 }
 
-// Bootstrap instructs the dht to begin bootstrapping the routing table.
-func (c *Coordinator) Bootstrap(ctx context.Context, seeds []kadt.PeerID) error {
+// Bootstrap instructs the dht to begin bootstrapping the routing table from the peers
+// configured as [RoutingConfig.BootstrapPeers]. A bootstrap also starts automatically
+// whenever the routing table holds fewer than
+// [RoutingConfig.BootstrapMinimumPopulation] nodes.
+func (c *Coordinator) Bootstrap(ctx context.Context) error {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.Bootstrap")
 	defer span.End()
 
-	c.routingBehaviour.Notify(ctx, &EventStartBootstrap{
-		SeedNodes: seeds,
-	})
+	c.routingBehaviour.Notify(ctx, &EventStartBootstrap{})
 
 	return nil
 }

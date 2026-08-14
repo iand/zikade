@@ -14,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 
 	"github.com/probe-lab/zikade/internal/coord"
 	"github.com/probe-lab/zikade/internal/coord/routing"
@@ -128,6 +129,8 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 	coordCfg.Routing.Logger = cfg.Logger.With("behaviour", "routing")
 	coordCfg.Routing.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
 	coordCfg.Routing.Meter = cfg.MeterProvider.Meter(tele.MeterName)
+	coordCfg.Routing.BootstrapPeers = d.addBootstrapPeers()
+	coordCfg.Routing.BootstrapMinimumPopulation = cfg.BootstrapMinimumPopulation
 
 	rtr := &router{
 		host:       h,
@@ -161,6 +164,21 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 	go d.consumeNetworkEvents(d.sub)
 
 	return d, nil
+}
+
+// addBootstrapPeers records the addresses of the configured bootstrap peers in the
+// peerstore and returns their ids. The addresses must be known before the coordinator
+// runs, since it starts bootstraps automatically.
+func (d *DHT) addBootstrapPeers() []kadt.PeerID {
+	ids := make([]kadt.PeerID, len(d.cfg.BootstrapPeers))
+	for i, addrInfo := range d.cfg.BootstrapPeers {
+		ids[i] = kadt.PeerID(addrInfo.ID)
+		// TODO: how to handle TTL if BootstrapPeers become dynamic and don't
+		// point to stable peers or consist of ephemeral peers that we have
+		// observed during a previous run.
+		d.host.Peerstore().AddAddrs(addrInfo.ID, addrInfo.Addrs, peerstore.PermanentAddrTTL)
+	}
+	return ids
 }
 
 // initAminoBackends initializes the default backends for the Amino DHT. This

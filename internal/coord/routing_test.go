@@ -260,7 +260,7 @@ func TestRoutingBootstrapRequestConcurrency(t *testing.T) {
 	bcfg := routing.DefaultBootstrapConfig()
 	bcfg.RequestConcurrency = 3
 
-	bootstrap, err := routing.NewBootstrap[kadt.Key](self, bcfg)
+	bootstrap, err := routing.NewBootstrap[kadt.Key](self, nodes[0].RoutingTable, nil, bcfg)
 	require.NoError(t, err)
 
 	cfg := DefaultRoutingConfig()

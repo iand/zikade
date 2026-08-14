@@ -121,6 +121,11 @@ type Config struct {
 	// into the DHT network.
 	BootstrapPeers []peer.AddrInfo
 
+	// BootstrapMinimumPopulation is the routing table population below which the DHT
+	// bootstraps itself from BootstrapPeers, without [DHT.Bootstrap] being called. Zero
+	// means the DHT only bootstraps when it is asked to.
+	BootstrapMinimumPopulation int
+
 	// ProtocolID represents the DHT [protocol] we can query with and respond to.
 	//
 	// [protocol]: https://docs.libp2p.io/concepts/fundamentals/protocols/
@@ -190,20 +195,21 @@ type Config struct {
 // fields come from separate top-level methods prefixed with Default.
 func DefaultConfig() *Config {
 	return &Config{
-		Clock:             clock.New(),
-		Mode:              ModeOptAutoClient,
-		BucketSize:        20, // MAGIC
-		BootstrapPeers:    DefaultBootstrapPeers(),
-		ProtocolID:        ProtocolIPFS,
-		RoutingTable:      nil,                  // nil because a routing table requires information about the local node. triert.TrieRT will be used if this field is nil.
-		Backends:          map[string]Backend{}, // if empty and [ProtocolIPFS] is used, it'll be populated with the ipns, pk and providers backends
-		Datastore:         nil,
-		Logger:            slog.New(zapslog.NewHandler(logging.Logger("dht").Desugar().Core())),
-		TimeoutStreamIdle: time.Minute, // MAGIC
-		AddressFilter:     AddrFilterPrivate,
-		MeterProvider:     otel.GetMeterProvider(),
-		TracerProvider:    otel.GetTracerProvider(),
-		Query:             DefaultQueryConfig(),
+		Clock:                      clock.New(),
+		Mode:                       ModeOptAutoClient,
+		BucketSize:                 20, // MAGIC
+		BootstrapPeers:             DefaultBootstrapPeers(),
+		BootstrapMinimumPopulation: 10, // MAGIC
+		ProtocolID:                 ProtocolIPFS,
+		RoutingTable:               nil,                  // nil because a routing table requires information about the local node. triert.TrieRT will be used if this field is nil.
+		Backends:                   map[string]Backend{}, // if empty and [ProtocolIPFS] is used, it'll be populated with the ipns, pk and providers backends
+		Datastore:                  nil,
+		Logger:                     slog.New(zapslog.NewHandler(logging.Logger("dht").Desugar().Core())),
+		TimeoutStreamIdle:          time.Minute, // MAGIC
+		AddressFilter:              AddrFilterPrivate,
+		MeterProvider:              otel.GetMeterProvider(),
+		TracerProvider:             otel.GetTracerProvider(),
+		Query:                      DefaultQueryConfig(),
 	}
 }
 
@@ -259,6 +265,13 @@ func (c *Config) Validate() error {
 		return &ConfigurationError{
 			Component: "Config",
 			Err:       fmt.Errorf("bucket size must not be 0"),
+		}
+	}
+
+	if c.BootstrapMinimumPopulation < 0 {
+		return &ConfigurationError{
+			Component: "Config",
+			Err:       fmt.Errorf("bootstrap minimum population must not be negative"),
 		}
 	}
 

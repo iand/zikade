@@ -133,7 +133,7 @@ func buildWaitingBootstrapBehaviour(t *testing.T, ctx context.Context, clk clock
 	bcfg.Timeout = 10 * conformanceDeadline
 	bcfg.RequestTimeout = conformanceDeadline
 
-	bootstrap, err := routing.NewBootstrap[kadt.Key](nodes[0].NodeID, bcfg)
+	bootstrap, err := routing.NewBootstrap[kadt.Key](nodes[0].NodeID, nodes[0].RoutingTable, nil, bcfg)
 	require.NoError(t, err)
 
 	cfg := DefaultRoutingConfig()

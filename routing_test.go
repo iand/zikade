@@ -916,19 +916,22 @@ func TestDHT_SearchValue_offline_not_found_locally(t *testing.T) {
 	assert.Nil(t, valChan)
 }
 
-func TestDHT_Bootstrap_no_peers_configured(t *testing.T) {
+func TestDHT_Bootstrap_from_configured_peers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
 		top := NewBubbleTopology(t)
-		d1 := top.AddServer(nil)
 		d2 := top.AddServer(nil)
 		d3 := top.AddServer(nil)
 
-		d1.cfg.BootstrapPeers = []peer.AddrInfo{
+		// the bootstrap peers are read when the DHT is built, so the peers it will
+		// bootstrap from have to exist first
+		cfg := DefaultConfig()
+		cfg.BootstrapPeers = []peer.AddrInfo{
 			{ID: d2.host.ID(), Addrs: d2.host.Addrs()},
 			{ID: d3.host.ID(), Addrs: d3.host.Addrs()},
 		}
+		d1 := top.AddServer(cfg)
 
 		err := d1.Bootstrap(ctx)
 		require.NoError(t, err)

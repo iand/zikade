@@ -57,6 +57,8 @@ type TerminalQueryEvent interface {
 }
 
 type EventStartBootstrap struct {
+	// SeedNodes are the nodes the bootstrap should start from. When empty the nodes
+	// configured as [RoutingConfig.BootstrapPeers] are used.
 	SeedNodes []kadt.PeerID
 }
 

@@ -14,7 +14,6 @@ import (
 	recpb "github.com/libp2p/go-libp2p-record/pb"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"go.opentelemetry.io/otel/attribute"
 	otel "go.opentelemetry.io/otel/trace"
@@ -499,19 +498,13 @@ func (d *DHT) getQuorum(opts *routing.Options) int {
 	return quorum
 }
 
+// Bootstrap starts a bootstrap of the routing table from the configured bootstrap peers.
+// The DHT also bootstraps itself whenever its routing table is short of nodes, so calling
+// this is not required.
 func (d *DHT) Bootstrap(ctx context.Context) error {
 	ctx, span := d.tele.Tracer.Start(ctx, "DHT.Bootstrap")
 	defer span.End()
 	d.log.Info("Starting bootstrap")
 
-	seed := make([]kadt.PeerID, len(d.cfg.BootstrapPeers))
-	for i, addrInfo := range d.cfg.BootstrapPeers {
-		seed[i] = kadt.PeerID(addrInfo.ID)
-		// TODO: how to handle TTL if BootstrapPeers become dynamic and don't
-		// point to stable peers or consist of ephemeral peers that we have
-		// observed during a previous run.
-		d.host.Peerstore().AddAddrs(addrInfo.ID, addrInfo.Addrs, peerstore.PermanentAddrTTL)
-	}
-
-	return d.kad.Bootstrap(ctx, seed)
+	return d.kad.Bootstrap(ctx)
 }

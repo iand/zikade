@@ -110,3 +110,19 @@ func TestDHT_Close_idempotent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestDHT_bootstrap_peer_addresses_known_at_startup checks that the addresses of the
+// configured bootstrap peers are in the peerstore once the DHT is built, since it may
+// bootstrap from them before anything asks it to.
+func TestDHT_bootstrap_peer_addresses_known_at_startup(t *testing.T) {
+	top := NewTopology(t)
+	remote := top.AddServer(nil)
+
+	cfg := DefaultConfig()
+	cfg.BootstrapPeers = []peer.AddrInfo{
+		{ID: remote.host.ID(), Addrs: remote.host.Addrs()},
+	}
+	local := top.AddServer(cfg)
+
+	require.NotEmpty(t, local.host.Peerstore().Addrs(remote.host.ID()))
+}

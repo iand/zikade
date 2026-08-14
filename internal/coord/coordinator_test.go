@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
+	"github.com/ipfs/go-libdht/kad/triert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
@@ -186,6 +187,7 @@ func TestBootstrap(t *testing.T) {
 		require.NoError(t, err)
 
 		ccfg := DefaultCoordinatorConfig()
+		ccfg.Routing.BootstrapPeers = []kadt.PeerID{nodes[1].NodeID}
 
 		self := nodes[0].NodeID
 		d, err := NewCoordinator(self, nodes[0].Router, nodes[0].RoutingTable, ccfg)
@@ -195,8 +197,7 @@ func TestBootstrap(t *testing.T) {
 		rn := NewBufferedRoutingNotifier()
 		d.SetRoutingNotifier(rn)
 
-		seeds := []kadt.PeerID{nodes[1].NodeID}
-		err = d.Bootstrap(ctx, seeds)
+		err = d.Bootstrap(ctx)
 		require.NoError(t, err)
 
 		// bootstrap runs in the background, wait for the coordinator to settle
@@ -374,6 +375,7 @@ func TestCoordinatorBootstrapTimesOut(t *testing.T) {
 		require.NoError(t, err)
 
 		ccfg := DefaultCoordinatorConfig()
+		ccfg.Routing.BootstrapPeers = []kadt.PeerID{nodes[1].NodeID}
 
 		// the bootstrap must give up before the request it is waiting on does, otherwise
 		// the query ends by running out of nodes rather than out of time
@@ -389,11 +391,36 @@ func TestCoordinatorBootstrapTimesOut(t *testing.T) {
 		rn := NewBufferedRoutingNotifier()
 		c.SetRoutingNotifier(rn)
 
-		err = c.Bootstrap(ctx, []kadt.PeerID{nodes[1].NodeID})
+		err = c.Bootstrap(ctx)
 		require.NoError(t, err)
 
 		ev, err := rn.Expect(ctx, &EventBootstrapFinished{})
 		require.NoError(t, err)
 		require.ErrorIs(t, ev.(*EventBootstrapFinished).Err, coordt.ErrQueryTimeout)
+	})
+}
+
+// TestCoordinatorBootstrapsWhenRoutingTableEmpty checks that a coordinator whose routing
+// table holds no nodes bootstraps from its configured peers without being asked to.
+func TestCoordinatorBootstrapsWhenRoutingTableEmpty(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, nodes, err := nettest.LinearTopology(4, clock.New())
+		require.NoError(t, err)
+
+		// a routing table of the coordinator's own, holding no nodes
+		rt, err := triert.New[kadt.Key, kadt.PeerID](nodes[0].NodeID, nil)
+		require.NoError(t, err)
+
+		ccfg := DefaultCoordinatorConfig()
+		ccfg.Routing.BootstrapPeers = []kadt.PeerID{nodes[1].NodeID}
+
+		c, err := NewCoordinator(nodes[0].NodeID, nodes[0].Router, rt, ccfg)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, c.Close()) })
+
+		// nothing asks for a bootstrap, the empty routing table is the only prompt
+		synctest.Wait()
+
+		require.NotEmpty(t, rt.NearestNodes(nodes[0].NodeID.Key(), 20))
 	})
 }

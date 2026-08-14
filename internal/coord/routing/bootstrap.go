@@ -20,12 +20,35 @@ import (
 // BootstrapQueryID is the id for the query operated by the bootstrap process
 const BootstrapQueryID = coordt.QueryID("bootstrap")
 
+// A bootstrapTrigger records what started a bootstrap. It is reported as the trigger
+// attribute on the bootstrap_started counter.
+type bootstrapTrigger string
+
+const (
+	// triggerAutomatic marks a bootstrap the state machine started because the routing
+	// table was short of nodes.
+	triggerAutomatic bootstrapTrigger = "automatic"
+
+	// triggerRequested marks a bootstrap started by an [EventBootstrapStart].
+	triggerRequested bootstrapTrigger = "requested"
+)
+
 type Bootstrap[K kad.Key[K], N kad.NodeID[K]] struct {
 	// self is the node id of the system the bootstrap is running on
 	self N
 
+	// rt is the routing table whose population determines when a bootstrap is needed
+	rt kad.RoutingTable[K, N]
+
+	// seeds are the nodes a bootstrap starts from when it is not given any
+	seeds []N
+
 	// qry is the query used by the bootstrap process
 	qry *query.Query[K, N, any]
+
+	// lastAttempt is the time the most recent bootstrap was started, or the zero time if
+	// none has been
+	lastAttempt time.Time
 
 	// cfg is a copy of the optional configuration supplied to the Bootstrap
 	cfg BootstrapConfig
@@ -38,6 +61,9 @@ type Bootstrap[K kad.Key[K], N kad.NodeID[K]] struct {
 
 	// counterFindFailed is a counter that tracks the number of requests to find closer nodes that failed.
 	counterFindFailed metric.Int64Counter
+
+	// counterStarted is a counter that tracks the number of bootstraps started.
+	counterStarted metric.Int64Counter
 
 	// counterFailed is a counter that tracks the number of bootstraps that ended without completing.
 	counterFailed metric.Int64Counter
@@ -54,6 +80,14 @@ type BootstrapConfig struct {
 	Timeout            time.Duration // the time to wait before terminating a query that is not making progress
 	RequestConcurrency int           // the maximum number of concurrent requests that each query may have in flight
 	RequestTimeout     time.Duration // the timeout queries should use for contacting a single node
+
+	// MinimumPopulation is the routing table population below which a bootstrap is started
+	// automatically. Zero means a bootstrap is only ever started on request.
+	MinimumPopulation int
+
+	// RetryInterval is the minimum time to leave between bootstraps started because the
+	// routing table population is below MinimumPopulation.
+	RetryInterval time.Duration
 
 	// Tracer is the tracer that should be used to trace execution.
 	Tracer trace.Tracer
@@ -99,6 +133,20 @@ func (cfg *BootstrapConfig) Validate() error {
 		}
 	}
 
+	if cfg.MinimumPopulation < 0 {
+		return &errs.ConfigurationError{
+			Component: "BootstrapConfig",
+			Err:       fmt.Errorf("minimum population must not be negative"),
+		}
+	}
+
+	if cfg.MinimumPopulation > 0 && cfg.RetryInterval < 1 {
+		return &errs.ConfigurationError{
+			Component: "BootstrapConfig",
+			Err:       fmt.Errorf("retry interval must be greater than zero"),
+		}
+	}
+
 	return nil
 }
 
@@ -112,10 +160,15 @@ func DefaultBootstrapConfig() *BootstrapConfig {
 		Timeout:            5 * time.Minute, // MAGIC
 		RequestConcurrency: 3,               // MAGIC
 		RequestTimeout:     time.Minute,     // MAGIC
+
+		MinimumPopulation: 10,          // MAGIC
+		RetryInterval:     time.Minute, // MAGIC
 	}
 }
 
-func NewBootstrap[K kad.Key[K], N kad.NodeID[K]](self N, cfg *BootstrapConfig) (*Bootstrap[K, N], error) {
+// NewBootstrap creates a bootstrap that seeds its queries from the given nodes and that
+// watches rt to decide when a bootstrap is needed.
+func NewBootstrap[K kad.Key[K], N kad.NodeID[K]](self N, rt kad.RoutingTable[K, N], seeds []N, cfg *BootstrapConfig) (*Bootstrap[K, N], error) {
 	if cfg == nil {
 		cfg = DefaultBootstrapConfig()
 	} else if err := cfg.Validate(); err != nil {
@@ -123,8 +176,10 @@ func NewBootstrap[K kad.Key[K], N kad.NodeID[K]](self N, cfg *BootstrapConfig) (
 	}
 
 	b := &Bootstrap[K, N]{
-		self: self,
-		cfg:  *cfg,
+		self:  self,
+		rt:    rt,
+		seeds: seeds,
+		cfg:   *cfg,
 	}
 
 	var err error
@@ -150,6 +205,14 @@ func NewBootstrap[K kad.Key[K], N kad.NodeID[K]](self N, cfg *BootstrapConfig) (
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create bootstrap_find_failed counter: %w", err)
+	}
+
+	b.counterStarted, err = cfg.Meter.Int64Counter(
+		"bootstrap_started",
+		metric.WithDescription("Total number of bootstraps started"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create bootstrap_started counter: %w", err)
 	}
 
 	b.counterFailed, err = cfg.Meter.Int64Counter(
@@ -194,20 +257,11 @@ func (b *Bootstrap[K, N]) Advance(ctx context.Context, now time.Time, ev Bootstr
 			return b.advanceQuery(ctx, now, &query.EventQueryPoll{})
 		}
 
-		iter := query.NewClosestNodesIter[K, N](b.self.Key())
-
-		qryCfg := query.DefaultQueryConfig()
-		qryCfg.Concurrency = b.cfg.RequestConcurrency
-		qryCfg.RequestTimeout = b.cfg.RequestTimeout
-		qryCfg.Timeout = b.cfg.Timeout
-
-		qry, err := query.NewFindCloserQuery[K, N, any](b.self, BootstrapQueryID, b.self.Key(), iter, tev.KnownClosestNodes, qryCfg)
-		if err != nil {
-			// TODO: don't panic
-			panic(err)
+		seeds := tev.KnownClosestNodes
+		if len(seeds) == 0 {
+			seeds = b.seeds
 		}
-		b.qry = qry
-		return b.advanceQuery(ctx, now, &query.EventQueryPoll{})
+		return b.startQuery(ctx, now, seeds, triggerRequested)
 
 	case *EventBootstrapFindCloserResponse[K, N]:
 		// ignore late responses
@@ -238,7 +292,45 @@ func (b *Bootstrap[K, N]) Advance(ctx context.Context, now time.Time, ev Bootstr
 		return b.advanceQuery(ctx, now, &query.EventQueryPoll{})
 	}
 
+	// nothing is running, so start a bootstrap if the routing table is short of nodes
+	if b.cfg.MinimumPopulation > 0 && len(b.seeds) > 0 && b.populationLow() {
+		if retryAt := b.lastAttempt.Add(b.cfg.RetryInterval); !b.lastAttempt.IsZero() && now.Before(retryAt) {
+			return &StateBootstrapIdle{NextDue: retryAt}
+		}
+		return b.startQuery(ctx, now, b.seeds, triggerAutomatic)
+	}
+
+	// a routing table that is not short of nodes only becomes so when a node is removed
+	// from it, which the bootstrap is told about by being advanced
 	return &StateBootstrapIdle{}
+}
+
+// populationLow reports whether the routing table holds fewer nodes than the bootstrap's
+// minimum population.
+func (b *Bootstrap[K, N]) populationLow() bool {
+	return len(b.rt.NearestNodes(b.self.Key(), b.cfg.MinimumPopulation)) < b.cfg.MinimumPopulation
+}
+
+// startQuery begins a bootstrap query for the local node's key, seeded with the given
+// nodes.
+func (b *Bootstrap[K, N]) startQuery(ctx context.Context, now time.Time, seeds []N, trigger bootstrapTrigger) BootstrapState {
+	iter := query.NewClosestNodesIter[K, N](b.self.Key())
+
+	qryCfg := query.DefaultQueryConfig()
+	qryCfg.Concurrency = b.cfg.RequestConcurrency
+	qryCfg.RequestTimeout = b.cfg.RequestTimeout
+	qryCfg.Timeout = b.cfg.Timeout
+
+	qry, err := query.NewFindCloserQuery[K, N, any](b.self, BootstrapQueryID, b.self.Key(), iter, seeds, qryCfg)
+	if err != nil {
+		// TODO: don't panic
+		panic(err)
+	}
+	b.qry = qry
+	b.lastAttempt = now
+	b.counterStarted.Add(ctx, 1, metric.WithAttributes(attribute.String("trigger", string(trigger))))
+
+	return b.advanceQuery(ctx, now, &query.EventQueryPoll{})
 }
 
 func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, now time.Time, qev query.QueryEvent) BootstrapState {
@@ -310,7 +402,9 @@ type StateBootstrapFindCloser[K kad.Key[K], N kad.NodeID[K]] struct {
 }
 
 // StateBootstrapIdle indicates that the bootstrap is not running its query.
-type StateBootstrapIdle struct{}
+type StateBootstrapIdle struct {
+	NextDue time.Time // the earliest time a bootstrap could be started, zero if none is due
+}
 
 // StateBootstrapFinished indicates that the bootstrap has finished.
 type StateBootstrapFinished struct {

@@ -95,6 +95,10 @@ func (t *Topology) AddServer(cfg *Config) *DHT {
 	}
 	cfg.Mode = ModeOptServer
 
+	// the default bootstrap peers are not reachable on the mocknet, so tests that want a
+	// bootstrap ask for one
+	cfg.BootstrapMinimumPopulation = 0
+
 	d, err := New(h, cfg)
 	require.NoError(t.tb, err)
 
@@ -125,6 +129,10 @@ func (t *Topology) AddClient(cfg *Config) *DHT {
 		cfg = DefaultConfig()
 	}
 	cfg.Mode = ModeOptClient
+
+	// the default bootstrap peers are not reachable on the mocknet, so tests that want a
+	// bootstrap ask for one
+	cfg.BootstrapMinimumPopulation = 0
 
 	d, err := New(h, cfg)
 	require.NoError(t.tb, err)

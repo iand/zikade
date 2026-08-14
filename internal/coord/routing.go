@@ -52,6 +52,17 @@ type RoutingConfig struct {
 	// BootstrapRequestTimeout is the timeout the behaviour should use when attempting to contact a node during bootstrap.
 	BootstrapRequestTimeout time.Duration
 
+	// BootstrapPeers is the list of nodes used to bootstrap the routing table.
+	BootstrapPeers []kadt.PeerID
+
+	// BootstrapMinimumPopulation is the routing table population below which the behaviour should
+	// start a bootstrap automatically. Zero means a bootstrap is only ever started on request.
+	BootstrapMinimumPopulation int
+
+	// BootstrapRetryInterval is the minimum time the behaviour should leave between bootstraps
+	// started because the routing table population is below BootstrapMinimumPopulation.
+	BootstrapRetryInterval time.Duration
+
 	// ConnectivityCheckTimeout is the timeout the behaviour should use when performing a connectivity check.
 	ConnectivityCheckTimeout time.Duration
 
@@ -147,6 +158,20 @@ func (cfg *RoutingConfig) Validate() error {
 		return &errs.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("bootstrap request timeout must be greater than zero"),
+		}
+	}
+
+	if cfg.BootstrapMinimumPopulation < 0 {
+		return &errs.ConfigurationError{
+			Component: "RoutingConfig",
+			Err:       fmt.Errorf("bootstrap minimum population must not be negative"),
+		}
+	}
+
+	if cfg.BootstrapMinimumPopulation > 0 && cfg.BootstrapRetryInterval < 1 {
+		return &errs.ConfigurationError{
+			Component: "RoutingConfig",
+			Err:       fmt.Errorf("bootstrap retry interval must be greater than zero"),
 		}
 	}
 
@@ -262,6 +287,8 @@ func DefaultRoutingConfig() *RoutingConfig {
 		BootstrapTimeout:            5 * time.Minute, // MAGIC
 		BootstrapRequestConcurrency: 3,               // MAGIC
 		BootstrapRequestTimeout:     time.Minute,     // MAGIC
+		BootstrapMinimumPopulation:  10,              // MAGIC
+		BootstrapRetryInterval:      time.Minute,     // MAGIC
 
 		ConnectivityCheckTimeout: time.Minute, // MAGIC
 
@@ -352,8 +379,10 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 	bootstrapCfg.Timeout = cfg.BootstrapTimeout
 	bootstrapCfg.RequestConcurrency = cfg.BootstrapRequestConcurrency
 	bootstrapCfg.RequestTimeout = cfg.BootstrapRequestTimeout
+	bootstrapCfg.MinimumPopulation = cfg.BootstrapMinimumPopulation
+	bootstrapCfg.RetryInterval = cfg.BootstrapRetryInterval
 
-	bootstrap, err := routing.NewBootstrap[kadt.Key](self, bootstrapCfg)
+	bootstrap, err := routing.NewBootstrap[kadt.Key](self, rt, cfg.BootstrapPeers, bootstrapCfg)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
@@ -788,7 +817,7 @@ func (r *RoutingBehaviour) advanceBootstrap(ctx context.Context, now time.Time, 
 		}, true
 	case *routing.StateBootstrapIdle:
 		// bootstrap not running, nothing to do
-		r.bootstrapDue = time.Time{}
+		r.bootstrapDue = st.NextDue
 	default:
 		panic(fmt.Sprintf("unexpected bootstrap state: %T", st))
 	}
