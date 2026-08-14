@@ -89,6 +89,9 @@ type CoordinatorConfig struct {
 	// TracerProvider is the tracer provider to use when initialising tracing
 	TracerProvider trace.TracerProvider
 
+	// Network is the configuration used for the [NetworkBehaviour] which sends requests to other peers.
+	Network NetworkConfig
+
 	// Routing is the configuration used for the [RoutingBehaviour] which maintains the health of the routing table.
 	Routing RoutingConfig
 
@@ -149,6 +152,11 @@ func DefaultCoordinatorConfig() *CoordinatorConfig {
 	cfg.Routing.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
 	cfg.Routing.Meter = cfg.MeterProvider.Meter(tele.MeterName)
 
+	cfg.Network = *DefaultNetworkConfig()
+	cfg.Network.Logger = cfg.Logger
+	cfg.Network.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
+	cfg.Network.Meter = cfg.MeterProvider.Meter(tele.MeterName)
+
 	return cfg
 }
 
@@ -175,7 +183,10 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 		return nil, fmt.Errorf("routing behaviour: %w", err)
 	}
 
-	networkBehaviour := NewNetworkBehaviour(rtr, cfg.Logger, tele.Tracer)
+	networkBehaviour, err := NewNetworkBehaviour(rtr, &cfg.Network)
+	if err != nil {
+		return nil, fmt.Errorf("network behaviour: %w", err)
+	}
 
 	b, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, nil)
 	if err != nil {

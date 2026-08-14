@@ -424,3 +424,73 @@ func TestCoordinatorBootstrapsWhenRoutingTableEmpty(t *testing.T) {
 		require.NotEmpty(t, rt.NearestNodes(nodes[0].NodeID.Key(), 20))
 	})
 }
+
+// stallRouter answers for every peer but one, which it accepts requests for and never
+// answers, blocking the caller until the request context is cancelled.
+type stallRouter struct {
+	coordt.Router[kadt.Key, kadt.PeerID, *pb.Message]
+	stall kadt.PeerID
+}
+
+func (r *stallRouter) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Message) (*pb.Message, error) {
+	if to.Equal(r.stall) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return r.Router.SendMessage(ctx, to, req)
+}
+
+func (r *stallRouter) GetClosestNodes(ctx context.Context, to kadt.PeerID, target kadt.Key) ([]kadt.PeerID, error) {
+	if to.Equal(r.stall) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return r.Router.GetClosestNodes(ctx, to, target)
+}
+
+// TestCoordinatorContinuesWhenPeerStalls checks that concurrent queries all finish when
+// one of the peers they contact accepts requests and never answers. The requests that peer
+// has no room for are dropped, so the event loop is never left waiting on it.
+func TestCoordinatorContinuesWhenPeerStalls(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := kadtest.CtxBubble(t)
+
+		_, nodes, err := nettest.LinearTopology(4, clock.New())
+		require.NoError(t, err)
+
+		rt, err := triert.New[kadt.Key, kadt.PeerID](nodes[0].NodeID, nil)
+		require.NoError(t, err)
+		for _, n := range nodes[1:] {
+			require.True(t, rt.AddNode(n.NodeID))
+		}
+
+		ccfg := DefaultCoordinatorConfig()
+
+		// one slot per peer, so the queries beyond the first to reach the stalled peer
+		// have to be dropped rather than queued behind it
+		ccfg.Network.PeerCapacity = 1
+
+		// the query that does reach the stalled peer ends when its request runs out of
+		// time, so that has to fall inside the test's own deadline
+		ccfg.Query.RequestTimeout = 2 * time.Second
+
+		rtr := &stallRouter{Router: nodes[0].Router, stall: nodes[1].NodeID}
+
+		c, err := NewCoordinator(nodes[0].NodeID, rtr, rt, ccfg)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, c.Close()) })
+
+		qfn := func(ctx context.Context, id kadt.PeerID, msg *pb.Message, stats coordt.QueryStats) error {
+			return nil
+		}
+
+		var wg sync.WaitGroup
+		for _, n := range nodes[1:] {
+			wg.Go(func() {
+				_, _, err := c.QueryClosest(ctx, n.NodeID.Key(), qfn, 20)
+				require.NoError(t, err)
+			})
+		}
+		wg.Wait()
+	})
+}

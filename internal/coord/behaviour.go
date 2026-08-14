@@ -2,7 +2,6 @@ package coord
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -110,87 +109,11 @@ func (t *readyTimer) Disarm() {
 	}
 }
 
-type WorkQueueFunc[E BehaviourEvent] func(context.Context, E) bool
-
-// WorkQueue is buffered queue of work to be performed.
-// The queue automatically drains the queue sequentially by calling a
-// WorkQueueFunc for each work item, passing the original context
-// and event.
-type WorkQueue[E BehaviourEvent] struct {
-	pending  chan CtxEvent[E]
-	fn       WorkQueueFunc[E]
-	done     atomic.Bool
-	once     sync.Once
-	stop     chan struct{}
-	stopOnce sync.Once
-}
-
-func NewWorkQueue[E BehaviourEvent](fn WorkQueueFunc[E]) *WorkQueue[E] {
-	w := &WorkQueue[E]{
-		pending: make(chan CtxEvent[E], 1),
-		fn:      fn,
-		stop:    make(chan struct{}),
-	}
-	return w
-}
-
 // CtxEvent holds and event with an associated context which may carry deadlines or
 // tracing information pertinent to the event.
 type CtxEvent[E any] struct {
 	Ctx   context.Context
 	Event E
-}
-
-// Enqueue queues work to be perfomed. It will block if the
-// queue has reached its maximum capacity for pending work. While
-// blocking it will return a context cancellation error if the work
-// item's context is cancelled.
-func (w *WorkQueue[E]) Enqueue(ctx context.Context, cmd E) error {
-	if w.done.Load() {
-		return nil
-	}
-	w.once.Do(func() {
-		go func() {
-			defer w.done.Store(true)
-			for {
-				select {
-				case <-w.stop:
-					return
-				case cc := <-w.pending:
-					if cc.Ctx.Err() != nil {
-						return
-					}
-					if done := w.fn(cc.Ctx, cc.Event); done {
-						w.done.Store(true)
-						return
-					}
-				}
-			}
-		}()
-	})
-
-	select {
-	case <-ctx.Done(): // this is the context for the work item
-		return ctx.Err()
-	case <-w.stop:
-		return nil
-	case w.pending <- CtxEvent[E]{
-		Ctx:   ctx,
-		Event: cmd,
-	}:
-		return nil
-
-	}
-}
-
-// Close stops the queue draining goroutine and discards any queued work.
-// Subsequent calls to Enqueue are ignored. It is safe to call Close more
-// than once.
-func (w *WorkQueue[E]) Close() {
-	w.stopOnce.Do(func() {
-		w.done.Store(true)
-		close(w.stop)
-	})
 }
 
 // A Waiter is a Notifiee whose Notify method forwards the
