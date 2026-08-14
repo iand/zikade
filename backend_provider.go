@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	lru "github.com/hashicorp/golang-lru/v2"
 	ds "github.com/ipfs/go-datastore"
 	dsq "github.com/ipfs/go-datastore/query"
@@ -69,7 +68,6 @@ var (
 // modify it to your liking.
 type ProvidersBackendConfig struct {
 	// clk is an unexported field that's used for testing time related methods
-	clk clock.Clock
 
 	// ProvideValidity specifies for how long provider records are valid
 	ProvideValidity time.Duration
@@ -112,7 +110,6 @@ func DefaultProviderBackendConfig() (*ProvidersBackendConfig, error) {
 	}
 
 	return &ProvidersBackendConfig{
-		clk:             clock.New(),
 		ProvideValidity: 48 * time.Hour, // empirically measured in: https://github.com/probe-lab/network-measurements/blob/master/results/rfm17-provider-record-liveness.md
 		AddressTTL:      24 * time.Hour, // MAGIC
 		CacheSize:       256,            // MAGIC
@@ -133,7 +130,7 @@ func (p *ProvidersBackend) Store(ctx context.Context, key string, value any) (an
 	}
 
 	rec := expiryRecord{
-		expiry: p.cfg.clk.Now(),
+		expiry: time.Now(),
 	}
 
 	cacheKey := newDatastoreKey(p.namespace, key).String()
@@ -186,7 +183,7 @@ func (p *ProvidersBackend) Fetch(ctx context.Context, key string) (any, error) {
 		}
 	}()
 
-	now := p.cfg.clk.Now()
+	now := time.Now()
 	out := &providerSet{
 		providers: []peer.AddrInfo{},
 		set:       make(map[peer.ID]time.Time),
@@ -296,7 +293,7 @@ func (p *ProvidersBackend) StartGarbageCollection() {
 
 	// init ticker outside the goroutine to prevent race condition with
 	// clock mock in garbage collection test.
-	ticker := p.cfg.clk.Ticker(p.cfg.GCInterval)
+	ticker := time.NewTicker(p.cfg.GCInterval)
 
 	go func() {
 		defer close(p.gcDone)
@@ -373,7 +370,7 @@ func (p *ProvidersBackend) collectGarbage(ctx context.Context) {
 		}
 
 		rec := expiryRecord{}
-		now := p.cfg.clk.Now()
+		now := time.Now()
 		if err = rec.UnmarshalBinary(e.Value); err != nil {
 			p.log.LogAttrs(ctx, slog.LevelWarn, "Garbage collection provider record unmarshalling failed", slog.String("key", e.Key), slog.String("err", err.Error()))
 			p.delete(ctx, ds.RawKey(e.Key))

@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
@@ -136,14 +135,12 @@ func earlier(a, b time.Time) time.Time {
 // behaviour's state machines falls due. It must only be armed from inside the lock that
 // guards the behaviour's state.
 type readyTimer struct {
-	clk   clock.Clock
 	ready chan struct{}
-	timer *clock.Timer
+	timer *time.Timer
 }
 
-func newReadyTimer(clk clock.Clock, ready chan struct{}) *readyTimer {
+func newReadyTimer(ready chan struct{}) *readyTimer {
 	return &readyTimer{
-		clk:   clk,
 		ready: ready,
 	}
 }
@@ -158,10 +155,10 @@ func (t *readyTimer) Arm(due time.Time) {
 
 	// A state machine treats a deadline as expired only once the clock is strictly past
 	// it, so the signal is scheduled at least a nanosecond out.
-	d := max(due.Sub(t.clk.Now()), time.Nanosecond)
+	d := max(time.Until(due), time.Nanosecond)
 
 	if t.timer == nil {
-		t.timer = t.clk.AfterFunc(d, func() { signalReady(t.ready) })
+		t.timer = time.AfterFunc(d, func() { signalReady(t.ready) })
 		return
 	}
 	t.timer.Reset(d)

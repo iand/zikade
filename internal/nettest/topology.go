@@ -3,8 +3,8 @@ package nettest
 import (
 	"context"
 	"fmt"
+	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
@@ -20,7 +20,6 @@ type Peer[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 }
 
 type Topology[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
-	clk       clock.Clock
 	proto     Protocol[K, N, M]
 	links     map[string]Link
 	nodes     []*Peer[K, N, M]
@@ -28,9 +27,8 @@ type Topology[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	routers   map[string]*Router[K, N, M]
 }
 
-func NewTopology[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](clk clock.Clock, proto Protocol[K, N, M]) *Topology[K, N, M] {
+func NewTopology[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](proto Protocol[K, N, M]) *Topology[K, N, M] {
 	return &Topology[K, N, M]{
-		clk:       clk,
 		proto:     proto,
 		links:     make(map[string]Link),
 		nodeIndex: make(map[string]*Peer[K, N, M]),
@@ -97,7 +95,7 @@ func (t *Topology[K, N, M]) Dial(ctx context.Context, from N, to N) error {
 
 	latency := route.DialLatency()
 	if latency > 0 {
-		t.clk.Sleep(latency)
+		time.Sleep(latency)
 	}
 
 	if err := route.DialErr(); err != nil {
@@ -131,7 +129,7 @@ func (t *Topology[K, N, M]) RouteMessage(ctx context.Context, from N, to N, req 
 
 	latency := route.ConnLatency()
 	if latency > 0 {
-		t.clk.Sleep(latency)
+		time.Sleep(latency)
 	}
 
 	node, ok := t.nodeIndex[to.String()]

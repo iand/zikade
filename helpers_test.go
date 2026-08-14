@@ -41,6 +41,23 @@ func newTestDHT(t testing.TB) *DHT {
 	return newTestDHTWithConfig(t, cfg)
 }
 
+// newBubbleDHTWithConfig returns a DHT for a test running inside a [testing/synctest]
+// bubble.
+//
+// It exists to schedule one extra step at teardown. The DHT owns an in-memory leveldb whose
+// pool drain goroutine finishes shutting down by waiting on time.After(time.Second). That
+// timer belongs to the bubble, and time stops advancing the moment the root goroutine exits,
+// so without a final sleep on fake time the goroutine never exits and synctest.Test reports a
+// deadlock. Cleanup functions run last-registered-first, so registering the sleep before the
+// DHT exists puts it after the close.
+func newBubbleDHTWithConfig(t testing.TB, cfg *Config) *DHT {
+	t.Helper()
+
+	t.Cleanup(func() { time.Sleep(2 * time.Second) })
+
+	return newTestDHTWithConfig(t, cfg)
+}
+
 func newTestDHTWithConfig(t testing.TB, cfg *Config) *DHT {
 	t.Helper()
 

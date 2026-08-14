@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/require"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -74,7 +73,7 @@ func TestTelemetryRecordsEventLoopOccupancy(t *testing.T) {
 func TestCoordinatorReportsThroughInjectedProvider(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	reader := sdkmetric.NewManualReader()

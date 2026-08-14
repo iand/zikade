@@ -3,9 +3,9 @@ package coord
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
@@ -74,18 +74,17 @@ func PerformWhileReady[I BehaviourEvent, O BehaviourEvent](t *testing.T, ctx con
 // testPeers returns n peers wired into a linear topology.
 func testPeers(t *testing.T, n int) []*testPeer {
 	t.Helper()
-	_, nodes, err := linearTopology(n, clock.New())
+	_, nodes, err := linearTopology(n)
 	require.NoError(t, err)
 	return nodes
 }
 
 // newTestQueryBehaviour returns a query behaviour that gives up on a query after
 // timeout and on an individual request after requestTimeout.
-func newTestQueryBehaviour(t *testing.T, clk clock.Clock, timeout, requestTimeout time.Duration, self tiny.Node) *QueryBehaviour[tiny.Key, tiny.Node, tiny.Message] {
+func newTestQueryBehaviour(t *testing.T, timeout, requestTimeout time.Duration, self tiny.Node) *QueryBehaviour[tiny.Key, tiny.Node, tiny.Message] {
 	t.Helper()
 
 	cfg := DefaultQueryConfig()
-	cfg.Clock = clk
 	cfg.Timeout = timeout
 	cfg.RequestTimeout = requestTimeout
 
@@ -95,14 +94,13 @@ func newTestQueryBehaviour(t *testing.T, clk clock.Clock, timeout, requestTimeou
 }
 
 // newTestBroadcastBehaviour returns a broadcast behaviour holding an empty pool.
-func newTestBroadcastBehaviour(t *testing.T, clk clock.Clock, self tiny.Node) *PooledBroadcastBehaviour[tiny.Key, tiny.Node, tiny.Message] {
+func newTestBroadcastBehaviour(t *testing.T, self tiny.Node) *PooledBroadcastBehaviour[tiny.Key, tiny.Node, tiny.Message] {
 	t.Helper()
 
 	pool, err := brdcst.NewPool[tiny.Key, tiny.Node, tiny.Message](self, nil)
 	require.NoError(t, err)
 
 	bcfg := DefaultBroadcastConfig[tiny.Key, tiny.Node, tiny.Message]()
-	bcfg.Clock = clk
 
 	b, err := NewPooledBroadcastBehaviour[tiny.Key, tiny.Node, tiny.Message](pool, bcfg)
 	require.NoError(t, err)
@@ -112,11 +110,11 @@ func newTestBroadcastBehaviour(t *testing.T, clk clock.Clock, self tiny.Node) *P
 
 // buildWaitingQueryBehaviour returns a builder for a query behaviour running a query
 // that has contacted a node and is waiting for a response that never arrives.
-func buildWaitingQueryBehaviour(timeout, requestTimeout time.Duration) func(t *testing.T, ctx context.Context, clk clock.Clock) Behaviour[BehaviourEvent, BehaviourEvent] {
-	return func(t *testing.T, ctx context.Context, clk clock.Clock) Behaviour[BehaviourEvent, BehaviourEvent] {
+func buildWaitingQueryBehaviour(timeout, requestTimeout time.Duration) func(t *testing.T, ctx context.Context) Behaviour[BehaviourEvent, BehaviourEvent] {
+	return func(t *testing.T, ctx context.Context) Behaviour[BehaviourEvent, BehaviourEvent] {
 		nodes := testPeers(t, 2)
 
-		b := newTestQueryBehaviour(t, clk, timeout, requestTimeout, nodes[0].NodeID)
+		b := newTestQueryBehaviour(t, timeout, requestTimeout, nodes[0].NodeID)
 		b.Notify(ctx, &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
 			QueryID:           "test",
 			Target:            nodes[1].NodeID.Key(),
@@ -129,7 +127,7 @@ func buildWaitingQueryBehaviour(timeout, requestTimeout time.Duration) func(t *t
 
 // buildWaitingBootstrapBehaviour returns a routing behaviour whose bootstrap has
 // contacted a seed and is waiting for a response that never arrives.
-func buildWaitingBootstrapBehaviour(t *testing.T, ctx context.Context, clk clock.Clock) Behaviour[BehaviourEvent, BehaviourEvent] {
+func buildWaitingBootstrapBehaviour(t *testing.T, ctx context.Context) Behaviour[BehaviourEvent, BehaviourEvent] {
 	nodes := testPeers(t, 2)
 
 	bcfg := routing.DefaultBootstrapConfig()
@@ -140,8 +138,6 @@ func buildWaitingBootstrapBehaviour(t *testing.T, ctx context.Context, clk clock
 	require.NoError(t, err)
 
 	cfg := DefaultRoutingConfig[tiny.Key, tiny.Node]()
-	cfg.Clock = clk
-
 	b, err := ComposeRoutingBehaviour[tiny.Key, tiny.Node](nodes[0].NodeID, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
@@ -154,7 +150,7 @@ func buildWaitingBootstrapBehaviour(t *testing.T, ctx context.Context, clk clock
 
 // buildWaitingIncludeBehaviour returns a routing behaviour whose include has started a
 // connectivity check for a candidate node that never answers.
-func buildWaitingIncludeBehaviour(t *testing.T, ctx context.Context, clk clock.Clock) Behaviour[BehaviourEvent, BehaviourEvent] {
+func buildWaitingIncludeBehaviour(t *testing.T, ctx context.Context) Behaviour[BehaviourEvent, BehaviourEvent] {
 	nodes := testPeers(t, 4)
 
 	icfg := routing.DefaultIncludeConfig()
@@ -164,8 +160,6 @@ func buildWaitingIncludeBehaviour(t *testing.T, ctx context.Context, clk clock.C
 	require.NoError(t, err)
 
 	cfg := DefaultRoutingConfig[tiny.Key, tiny.Node]()
-	cfg.Clock = clk
-
 	b, err := ComposeRoutingBehaviour[tiny.Key, tiny.Node](nodes[0].NodeID, idleBootstrap(), include, idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
@@ -178,7 +172,7 @@ func buildWaitingIncludeBehaviour(t *testing.T, ctx context.Context, clk clock.C
 
 // buildWaitingProbeBehaviour returns a routing behaviour whose probe holds a node whose
 // next connectivity check is due after the check interval.
-func buildWaitingProbeBehaviour(t *testing.T, ctx context.Context, clk clock.Clock) Behaviour[BehaviourEvent, BehaviourEvent] {
+func buildWaitingProbeBehaviour(t *testing.T, ctx context.Context) Behaviour[BehaviourEvent, BehaviourEvent] {
 	nodes := testPeers(t, 2)
 
 	pcfg := routing.DefaultProbeConfig()
@@ -188,8 +182,6 @@ func buildWaitingProbeBehaviour(t *testing.T, ctx context.Context, clk clock.Clo
 	require.NoError(t, err)
 
 	cfg := DefaultRoutingConfig[tiny.Key, tiny.Node]()
-	cfg.Clock = clk
-
 	b, err := ComposeRoutingBehaviour[tiny.Key, tiny.Node](nodes[0].NodeID, idleBootstrap(), idleInclude(), probe, idleExplore(), cfg)
 	require.NoError(t, err)
 
@@ -204,13 +196,11 @@ func buildWaitingProbeBehaviour(t *testing.T, ctx context.Context, clk clock.Clo
 
 // buildWaitingExploreBehaviour returns a routing behaviour whose explore has nothing to
 // do until the first cpl in its schedule falls due.
-func buildWaitingExploreBehaviour(t *testing.T, ctx context.Context, clk clock.Clock) Behaviour[BehaviourEvent, BehaviourEvent] {
+func buildWaitingExploreBehaviour(t *testing.T, ctx context.Context) Behaviour[BehaviourEvent, BehaviourEvent] {
 	nodes := testPeers(t, 2)
 
 	cfg := DefaultRoutingConfig[tiny.Key, tiny.Node]()
-	cfg.Clock = clk
-
-	schedule, err := routing.NewDynamicExploreSchedule(cfg.ExploreMaximumCpl, clk.Now(), conformanceDeadline, cfg.ExploreIntervalMultiplier, cfg.ExploreIntervalJitter)
+	schedule, err := routing.NewDynamicExploreSchedule(cfg.ExploreMaximumCpl, time.Now(), conformanceDeadline, cfg.ExploreIntervalMultiplier, cfg.ExploreIntervalJitter)
 	require.NoError(t, err)
 
 	explore, err := routing.NewExplore[tiny.Key](nodes[0].NodeID, nodes[0].RoutingTable, tiny.NodeWithCpl, schedule, routing.DefaultExploreConfig())
@@ -224,14 +214,14 @@ func buildWaitingExploreBehaviour(t *testing.T, ctx context.Context, clk clock.C
 
 // buildWaitingBroadcastBehaviour returns a broadcast behaviour running a follow up
 // broadcast that has contacted a seed and is waiting for a response that never arrives.
-func buildWaitingBroadcastBehaviour(t *testing.T, ctx context.Context, clk clock.Clock) Behaviour[BehaviourEvent, BehaviourEvent] {
+func buildWaitingBroadcastBehaviour(t *testing.T, ctx context.Context) Behaviour[BehaviourEvent, BehaviourEvent] {
 	nodes := testPeers(t, 2)
 
 	// the pool the broadcast borrows takes no configuration, so this case depends on its
 	// default request timeout matching the deadline the other cases use
 	require.Equal(t, conformanceDeadline, query.DefaultPoolConfig().RequestTimeout)
 
-	b := newTestBroadcastBehaviour(t, clk, nodes[0].NodeID)
+	b := newTestBroadcastBehaviour(t, nodes[0].NodeID)
 
 	msg := tiny.Message{Content: "store"}
 	b.Notify(ctx, &EventStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
@@ -258,7 +248,7 @@ func TestBehaviourSignalsReadyAtDeadline(t *testing.T) {
 		name string
 		// build returns a behaviour that will be waiting on a deadline of
 		// conformanceDeadline once it has been driven until it has no more work.
-		build func(t *testing.T, ctx context.Context, clk clock.Clock) Behaviour[BehaviourEvent, BehaviourEvent]
+		build func(t *testing.T, ctx context.Context) Behaviour[BehaviourEvent, BehaviourEvent]
 	}{
 		{
 			name:  "query request timeout",
@@ -292,27 +282,29 @@ func TestBehaviourSignalsReadyAtDeadline(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := kadtest.CtxShort(t)
-			clk := clock.NewMock()
+			synctest.Test(t, func(t *testing.T) {
+				ctx := kadtest.CtxBubble(t)
 
-			b := tc.build(t, ctx, clk)
+				b := tc.build(t, ctx)
 
-			// drive the behaviour until it has no more work, discarding generated events
-			PerformWhileReady(t, ctx, b)
+				// drive the behaviour until it has no more work, discarding generated events
+				PerformWhileReady(t, ctx, b)
 
-			select {
-			case <-b.Ready():
-				t.Fatal("behaviour signalled ready before its deadline fell due")
-			default:
-			}
+				select {
+				case <-b.Ready():
+					t.Fatal("behaviour signalled ready before its deadline fell due")
+				default:
+				}
 
-			clk.Add(conformanceDeadline)
+				time.Sleep(conformanceDeadline)
+				synctest.Wait()
 
-			select {
-			case <-b.Ready():
-			case <-time.After(time.Second):
-				t.Fatalf("behaviour did not signal ready by its deadline of %s", conformanceDeadline)
-			}
+				select {
+				case <-b.Ready():
+				default:
+					t.Fatalf("behaviour did not signal ready by its deadline of %s", conformanceDeadline)
+				}
+			})
 		})
 	}
 }
@@ -322,21 +314,19 @@ func TestBehaviourSignalsReadyAtDeadline(t *testing.T) {
 func TestBehaviourWithNoWorkArmsNoTimer(t *testing.T) {
 	testCases := []struct {
 		name  string
-		build func(t *testing.T, clk clock.Clock) (Behaviour[BehaviourEvent, BehaviourEvent], *readyTimer)
+		build func(t *testing.T) (Behaviour[BehaviourEvent, BehaviourEvent], *readyTimer)
 	}{
 		{
 			name: "query",
-			build: func(t *testing.T, clk clock.Clock) (Behaviour[BehaviourEvent, BehaviourEvent], *readyTimer) {
-				b := newTestQueryBehaviour(t, clk, time.Minute, time.Minute, testPeers(t, 1)[0].NodeID)
+			build: func(t *testing.T) (Behaviour[BehaviourEvent, BehaviourEvent], *readyTimer) {
+				b := newTestQueryBehaviour(t, time.Minute, time.Minute, testPeers(t, 1)[0].NodeID)
 				return b, b.readyTimer
 			},
 		},
 		{
 			name: "routing",
-			build: func(t *testing.T, clk clock.Clock) (Behaviour[BehaviourEvent, BehaviourEvent], *readyTimer) {
+			build: func(t *testing.T) (Behaviour[BehaviourEvent, BehaviourEvent], *readyTimer) {
 				cfg := DefaultRoutingConfig[tiny.Key, tiny.Node]()
-				cfg.Clock = clk
-
 				b, err := ComposeRoutingBehaviour[tiny.Key, tiny.Node](testPeers(t, 1)[0].NodeID, idleBootstrap(), idleInclude(), idleProbe(), idleExplore(), cfg)
 				require.NoError(t, err)
 				return b, b.readyTimer
@@ -344,8 +334,8 @@ func TestBehaviourWithNoWorkArmsNoTimer(t *testing.T) {
 		},
 		{
 			name: "broadcast",
-			build: func(t *testing.T, clk clock.Clock) (Behaviour[BehaviourEvent, BehaviourEvent], *readyTimer) {
-				b := newTestBroadcastBehaviour(t, clk, testPeers(t, 1)[0].NodeID)
+			build: func(t *testing.T) (Behaviour[BehaviourEvent, BehaviourEvent], *readyTimer) {
+				b := newTestBroadcastBehaviour(t, testPeers(t, 1)[0].NodeID)
 				return b, b.readyTimer
 			},
 		},
@@ -353,24 +343,26 @@ func TestBehaviourWithNoWorkArmsNoTimer(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := kadtest.CtxShort(t)
-			clk := clock.NewMock()
+			synctest.Test(t, func(t *testing.T) {
+				ctx := kadtest.CtxBubble(t)
 
-			b, timer := tc.build(t, clk)
+				b, timer := tc.build(t)
 
-			PerformWhileReady(t, ctx, b)
+				PerformWhileReady(t, ctx, b)
 
-			if timer.timer != nil {
-				t.Error("behaviour armed a timer with no work outstanding")
-			}
+				if timer.timer != nil {
+					t.Error("behaviour armed a timer with no work outstanding")
+				}
 
-			clk.Add(24 * time.Hour)
+				time.Sleep(24 * time.Hour)
+				synctest.Wait()
 
-			select {
-			case <-b.Ready():
-				t.Error("behaviour signalled ready with no work outstanding")
-			default:
-			}
+				select {
+				case <-b.Ready():
+					t.Error("behaviour signalled ready with no work outstanding")
+				default:
+				}
+			})
 		})
 	}
 }

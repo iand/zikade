@@ -7,7 +7,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/require"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
@@ -23,7 +22,7 @@ import (
 func TestNetworkBehaviourDropsRequestsBeyondNodeCapacity(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(2, clock.New())
+	_, nodes, err := linearTopology(2)
 	require.NoError(t, err)
 
 	cfg := DefaultNetworkConfig()
@@ -91,7 +90,7 @@ func TestNetworkBehaviourEvictsIdleNodeHandlers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		cfg := DefaultNetworkConfig()
@@ -155,7 +154,7 @@ func TestNetworkBehaviourKeepsBusyNodeHandlers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(2, clock.New())
+		_, nodes, err := linearTopology(2)
 		require.NoError(t, err)
 
 		cfg := DefaultNetworkConfig()
@@ -197,7 +196,7 @@ func TestEvictIdleRefusesBusyHandler(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(2, clock.New())
+		_, nodes, err := linearTopology(2)
 		require.NoError(t, err)
 
 		rtr := &blockingRouter{release: make(chan struct{})}
@@ -235,7 +234,7 @@ func TestEvictIdleRefusesBusyHandler(t *testing.T) {
 func TestNetworkBehaviourReportsInFlightRequests(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(3, clock.New())
+	_, nodes, err := linearTopology(3)
 	require.NoError(t, err)
 
 	reader := sdkmetric.NewManualReader()

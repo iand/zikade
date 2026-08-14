@@ -3,7 +3,6 @@ package nettest
 import (
 	"context"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 	"github.com/ipfs/go-libdht/kad/triert"
 
@@ -16,10 +15,10 @@ import (
 // The topology is not a ring: nodes[0] only has nodes[1] in its table and nodes[n-1] only has nodes[n-2] in its table.
 // nodes[1] has nodes[0] and nodes[2] in its routing table.
 // If n > 2 then the first and last nodes will not have one another in their routing tables.
-func LinearTopology[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](n int, clk clock.Clock, proto Protocol[K, N, M]) (*Topology[K, N, M], []*Peer[K, N, M], error) {
+func LinearTopology[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](n int, proto Protocol[K, N, M]) (*Topology[K, N, M], []*Peer[K, N, M], error) {
 	nodes := make([]*Peer[K, N, M], n)
 
-	top := NewTopology(clk, proto)
+	top := NewTopology(proto)
 	for i := range nodes {
 
 		id, err := proto.NewNodeID()

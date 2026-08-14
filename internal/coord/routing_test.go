@@ -6,7 +6,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
@@ -40,13 +39,6 @@ func TestRoutingConfigValidate(t *testing.T) {
 		cfg := DefaultRoutingConfig[tiny.Key, tiny.Node]()
 
 		require.NoError(t, cfg.Validate())
-	})
-
-	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultRoutingConfig[tiny.Key, tiny.Node]()
-
-		cfg.Clock = nil
-		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("logger not nil", func(t *testing.T) {
@@ -212,7 +204,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 func TestRoutingStartBootstrapSendsEvent(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -249,7 +241,7 @@ func TestRoutingStartBootstrapSendsEvent(t *testing.T) {
 func TestRoutingBootstrapRequestConcurrency(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(6, clock.New())
+	_, nodes, err := linearTopology(6)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -289,7 +281,7 @@ func TestRoutingBootstrapRequestConcurrency(t *testing.T) {
 func TestRoutingBootstrapGetClosestNodesSuccess(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -322,7 +314,7 @@ func TestRoutingBootstrapGetClosestNodesSuccess(t *testing.T) {
 func TestRoutingBootstrapGetClosestNodesFailure(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -356,7 +348,7 @@ func TestRoutingBootstrapGetClosestNodesFailure(t *testing.T) {
 func TestRoutingAddNodeInfoSendsEvent(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -385,7 +377,7 @@ func TestRoutingAddNodeInfoSendsEvent(t *testing.T) {
 func TestRoutingIncludeGetClosestNodesSuccess(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -417,7 +409,7 @@ func TestRoutingIncludeGetClosestNodesSuccess(t *testing.T) {
 func TestRoutingIncludeGetClosestNodesFailure(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -454,7 +446,7 @@ func TestRoutingIncludedNodeAddToProbeList(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		self := nodes[0].NodeID
@@ -535,7 +527,7 @@ func TestRoutingIncludedNodeAddToProbeList(t *testing.T) {
 func TestRoutingExploreSendsEvent(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -575,7 +567,7 @@ func TestRoutingExploreSendsEvent(t *testing.T) {
 func TestRoutingExploreGetClosestNodesSuccess(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -607,7 +599,7 @@ func TestRoutingExploreGetClosestNodesSuccess(t *testing.T) {
 func TestRoutingExploreGetClosestNodesFailure(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -644,7 +636,7 @@ func TestRoutingProbeKeepsNodeWhenCheckDropped(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		self := nodes[0].NodeID

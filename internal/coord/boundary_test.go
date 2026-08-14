@@ -35,7 +35,6 @@ var nonCoreDirs = []string{
 // allowedModules are the third party module paths the core may import. A path
 // matches when it equals an entry or is below it.
 var allowedModules = []string{
-	"github.com/benbjohnson/clock",
 	"github.com/ipfs/go-libdht",
 	"go.opentelemetry.io/otel",
 }

@@ -8,7 +8,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad/triert"
 	"github.com/stretchr/testify/require"
 
@@ -22,13 +21,6 @@ func TestConfigValidate(t *testing.T) {
 		cfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
 
 		require.NoError(t, cfg.Validate())
-	})
-
-	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
-
-		cfg.Clock = nil
-		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("logger not nil", func(t *testing.T) {
@@ -55,7 +47,7 @@ func TestExhaustiveQuery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		ccfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
@@ -97,7 +89,7 @@ func TestQueryReturnsClosestNodes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		self := nodes[0].NodeID
@@ -120,7 +112,7 @@ func TestRoutingUpdatedEventEmittedForCloserNodes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		ccfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
@@ -181,7 +173,7 @@ func TestBootstrap(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		ccfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
@@ -232,7 +224,7 @@ func TestIncludeNode(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		ccfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
@@ -307,7 +299,7 @@ func TestCoordinatorTimesOutIdleQuery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(2, clock.New())
+		_, nodes, err := linearTopology(2)
 		require.NoError(t, err)
 
 		ccfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
@@ -340,7 +332,7 @@ func TestCoordinatorTimesOutIdleQuery(t *testing.T) {
 // still explores its routing table when the first cpl in its schedule falls due.
 func TestCoordinatorExploresOnSchedule(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, nodes, err := linearTopology(2, clock.New())
+		_, nodes, err := linearTopology(2)
 		require.NoError(t, err)
 
 		ccfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
@@ -372,7 +364,7 @@ func TestCoordinatorBootstrapTimesOut(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(2, clock.New())
+		_, nodes, err := linearTopology(2)
 		require.NoError(t, err)
 
 		ccfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
@@ -405,7 +397,7 @@ func TestCoordinatorBootstrapTimesOut(t *testing.T) {
 // table holds no nodes bootstraps from its configured peers without being asked to.
 func TestCoordinatorBootstrapsWhenRoutingTableEmpty(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		// a routing table of the coordinator's own, holding no nodes
@@ -456,7 +448,7 @@ func TestCoordinatorContinuesWhenPeerStalls(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := kadtest.CtxBubble(t)
 
-		_, nodes, err := linearTopology(4, clock.New())
+		_, nodes, err := linearTopology(4)
 		require.NoError(t, err)
 
 		rt, err := triert.New[tiny.Key, tiny.Node](nodes[0].NodeID, nil)

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -21,13 +21,6 @@ func TestQueryConfigValidate(t *testing.T) {
 		cfg := DefaultQueryConfig()
 
 		require.NoError(t, cfg.Validate())
-	})
-
-	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultQueryConfig()
-
-		cfg.Clock = nil
-		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("logger not nil", func(t *testing.T) {
@@ -92,7 +85,7 @@ type QueryBehaviourBaseTestSuite struct {
 }
 
 func (ts *QueryBehaviourBaseTestSuite) SetupTest() {
-	top, nodes, err := linearTopology(4, clock.New())
+	top, nodes, err := linearTopology(4)
 	ts.Require().NoError(err)
 
 	ts.top = top
@@ -282,7 +275,7 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryFinished() {
 func TestQueryBehaviourRequestConcurrency(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(6, clock.New())
+	_, nodes, err := linearTopology(6)
 	require.NoError(t, err)
 
 	cfg := DefaultQueryConfig()
@@ -322,112 +315,116 @@ func TestQueryBehaviourRequestConcurrency(t *testing.T) {
 // TestQueryBehaviourNotifiesQueryTimeout checks that a query which runs out of time tells
 // its waiter so and releases the notifier that was held for it.
 func TestQueryBehaviourNotifiesQueryTimeout(t *testing.T) {
-	ctx := kadtest.CtxShort(t)
+	synctest.Test(t, func(t *testing.T) {
+		// the query outlives the deadline kadtest.CtxBubble would give, since the sleep
+		// that expires it moves the same fake clock
+		ctx := t.Context()
 
-	clk := clock.NewMock()
-	_, nodes, err := linearTopology(3, clk)
-	require.NoError(t, err)
+		_, nodes, err := linearTopology(3)
+		require.NoError(t, err)
 
-	cfg := DefaultQueryConfig()
-	cfg.Clock = clk
-	cfg.Timeout = time.Minute
+		cfg := DefaultQueryConfig()
+		cfg.Timeout = time.Minute
 
-	// one request at a time, so the query has nothing to do but wait for the response
-	// that never arrives
-	cfg.RequestConcurrency = 1
+		// one request at a time, so the query has nothing to do but wait for the response
+		// that never arrives
+		cfg.RequestConcurrency = 1
 
-	// the request must outlive the query, otherwise the query ends by running out of
-	// nodes to contact rather than by running out of time
-	cfg.RequestTimeout = time.Hour
+		// the request must outlive the query, otherwise the query ends by running out of
+		// nodes to contact rather than by running out of time
+		cfg.RequestTimeout = time.Hour
 
-	b, err := NewQueryBehaviour[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, cfg)
-	require.NoError(t, err)
+		b, err := NewQueryBehaviour[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, cfg)
+		require.NoError(t, err)
 
-	waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
-	b.Notify(ctx, &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
-		QueryID:           "test",
-		Target:            nodes[2].NodeID.Key(),
-		KnownClosestNodes: []tiny.Node{nodes[1].NodeID},
-		Notify:            waiter,
-		NumResults:        10,
+		waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
+		b.Notify(ctx, &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
+			QueryID:           "test",
+			Target:            nodes[2].NodeID.Key(),
+			KnownClosestNodes: []tiny.Node{nodes[1].NodeID},
+			Notify:            waiter,
+			NumResults:        10,
+		})
+
+		bev, ok := b.Perform(ctx)
+		require.True(t, ok)
+		require.IsType(t, &EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
+		require.Len(t, b.notifiers, 1)
+
+		// the node never responds and the query runs out of time
+		time.Sleep(2 * cfg.Timeout)
+		synctest.Wait()
+		_, ok = b.Perform(ctx)
+		require.False(t, ok)
+
+		wev := kadtest.ReadItem[CtxEvent[*EventQueryFinished[tiny.Key, tiny.Node]]](t, ctx, waiter.Finished())
+		require.ErrorIs(t, wev.Event.Err, coordt.ErrQueryTimeout)
+		require.Equal(t, coordt.QueryID("test"), wev.Event.QueryID)
+
+		// the notifier is not retained for a query the pool has removed
+		require.Empty(t, b.notifiers)
 	})
-
-	bev, ok := b.Perform(ctx)
-	require.True(t, ok)
-	require.IsType(t, &EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
-	require.Len(t, b.notifiers, 1)
-
-	// the node never responds and the query runs out of time
-	clk.Add(2 * cfg.Timeout)
-	_, ok = b.Perform(ctx)
-	require.False(t, ok)
-
-	wev := kadtest.ReadItem[CtxEvent[*EventQueryFinished[tiny.Key, tiny.Node]]](t, ctx, waiter.Finished())
-	require.ErrorIs(t, wev.Event.Err, coordt.ErrQueryTimeout)
-	require.Equal(t, coordt.QueryID("test"), wev.Event.QueryID)
-
-	// the notifier is not retained for a query the pool has removed
-	require.Empty(t, b.notifiers)
 }
 
 // TestQueryTimeoutUnblocksWaitForQuery checks that a caller waiting on a query that runs
 // out of time is given a timeout error rather than being left blocked until its own
 // context expires.
 func TestQueryTimeoutUnblocksWaitForQuery(t *testing.T) {
-	ctx := kadtest.CtxShort(t)
-	queryID := coordt.QueryID("test")
+	synctest.Test(t, func(t *testing.T) {
+		// the query outlives the deadline kadtest.CtxBubble would give, since the sleep
+		// that expires it moves the same fake clock
+		ctx := t.Context()
+		queryID := coordt.QueryID("test")
 
-	clk := clock.NewMock()
-	_, nodes, err := linearTopology(3, clk)
-	require.NoError(t, err)
+		_, nodes, err := linearTopology(3)
+		require.NoError(t, err)
 
-	cfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
-	cfg.Clock = clk
-	cfg.Query.Clock = clk
-	cfg.Query.Timeout = time.Minute
-	cfg.Query.RequestConcurrency = 1
+		cfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
+		cfg.Query.Timeout = time.Minute
+		cfg.Query.RequestConcurrency = 1
 
-	// the request must outlive the query, otherwise the query ends by running out of
-	// nodes to contact rather than by running out of time
-	cfg.Query.RequestTimeout = time.Hour
-	cfg.Routing.Clock = clk
+		// the request must outlive the query, otherwise the query ends by running out of
+		// nodes to contact rather than by running out of time
+		cfg.Query.RequestTimeout = time.Hour
 
-	// the coordinator is closed immediately so the test drives the query behaviour
-	// itself rather than racing the event loop
-	c, err := NewCoordinator[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, tiny.NodeWithCpl, cfg)
-	require.NoError(t, err)
-	require.NoError(t, c.Close())
+		// the coordinator is closed immediately so the test drives the query behaviour
+		// itself rather than racing the event loop
+		c, err := NewCoordinator[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, tiny.NodeWithCpl, cfg)
+		require.NoError(t, err)
+		require.NoError(t, c.Close())
 
-	waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
+		waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
 
-	waiterDone := make(chan struct{})
-	var waitErr error
-	go func() {
-		defer close(waiterDone)
-		_, _, waitErr = c.waitForQuery(ctx, queryID, waiter, func(ctx context.Context, id tiny.Node, resp tiny.Message, stats coordt.QueryStats) error {
-			return nil
+		waiterDone := make(chan struct{})
+		var waitErr error
+		go func() {
+			defer close(waiterDone)
+			_, _, waitErr = c.waitForQuery(ctx, queryID, waiter, func(ctx context.Context, id tiny.Node, resp tiny.Message, stats coordt.QueryStats) error {
+				return nil
+			})
+		}()
+
+		c.queryBehaviour.Notify(ctx, &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
+			QueryID:           queryID,
+			Target:            nodes[2].NodeID.Key(),
+			KnownClosestNodes: []tiny.Node{nodes[1].NodeID},
+			Notify:            waiter,
+			NumResults:        10,
 		})
-	}()
 
-	c.queryBehaviour.Notify(ctx, &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
-		QueryID:           queryID,
-		Target:            nodes[2].NodeID.Key(),
-		KnownClosestNodes: []tiny.Node{nodes[1].NodeID},
-		Notify:            waiter,
-		NumResults:        10,
+		bev, ok := c.queryBehaviour.Perform(ctx)
+		require.True(t, ok)
+		require.IsType(t, &EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
+
+		// the node never responds and the query runs out of time
+		time.Sleep(2 * cfg.Query.Timeout)
+		synctest.Wait()
+		_, ok = c.queryBehaviour.Perform(ctx)
+		require.False(t, ok)
+
+		kadtest.AssertClosed(t, ctx, waiterDone)
+		require.ErrorIs(t, waitErr, coordt.ErrQueryTimeout)
 	})
-
-	bev, ok := c.queryBehaviour.Perform(ctx)
-	require.True(t, ok)
-	require.IsType(t, &EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
-
-	// the node never responds and the query runs out of time
-	clk.Add(2 * cfg.Query.Timeout)
-	_, ok = c.queryBehaviour.Perform(ctx)
-	require.False(t, ok)
-
-	kadtest.AssertClosed(t, ctx, waiterDone)
-	require.ErrorIs(t, waitErr, coordt.ErrQueryTimeout)
 }
 
 // TestQuery_deadlock_regression checks that a waiter which is slow to consume query events
@@ -437,7 +434,7 @@ func TestQuery_deadlock_regression(t *testing.T) {
 	msg := tiny.Message{}
 	queryID := coordt.QueryID("test")
 
-	_, nodes, err := linearTopology(3, clock.New())
+	_, nodes, err := linearTopology(3)
 	require.NoError(t, err)
 
 	// it would be better to just work with the queryBehaviour in this test.
@@ -557,7 +554,7 @@ func TestQuery_deadlock_regression(t *testing.T) {
 func TestQueryBehaviourReportsDroppedQueryStart(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(2, clock.New())
+	_, nodes, err := linearTopology(2)
 	require.NoError(t, err)
 
 	cfg := DefaultQueryConfig()
@@ -592,7 +589,7 @@ func TestQueryBehaviourReportsDroppedQueryStart(t *testing.T) {
 func TestQueryBehaviourBoundsItsInboundQueue(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(2, clock.New())
+	_, nodes, err := linearTopology(2)
 	require.NoError(t, err)
 
 	cfg := DefaultQueryConfig()

@@ -3,7 +3,7 @@ module github.com/probe-lab/zikade
 go 1.25.7
 
 require (
-	github.com/benbjohnson/clock v1.3.5
+	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/ipfs/boxo v0.42.1
 	github.com/ipfs/go-cid v0.6.2

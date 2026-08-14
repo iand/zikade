@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	ds "github.com/ipfs/go-datastore"
 	leveldb "github.com/ipfs/go-ds-leveldb"
 	"github.com/ipfs/go-libdht/kad/triert"
@@ -104,9 +103,6 @@ const (
 // to build up your own configuration struct. The [DHT] constructor [New] uses the
 // below method [*Config.Validate] to test for violations of configuration invariants.
 type Config struct {
-	// Clock
-	Clock clock.Clock
-
 	// Mode defines if the DHT should operate as a server or client or switch
 	// between both automatically (see ModeOpt).
 	Mode ModeOpt
@@ -199,7 +195,6 @@ type Config struct {
 // fields come from separate top-level methods prefixed with Default.
 func DefaultConfig() *Config {
 	return &Config{
-		Clock:                      clock.New(),
 		Mode:                       ModeOptAutoClient,
 		BucketSize:                 20, // MAGIC
 		BootstrapPeers:             DefaultBootstrapPeers(),
@@ -239,10 +234,6 @@ func InMemoryDatastore() (Datastore, error) {
 // an error if any configuration issue was detected and nil if this is
 // a valid configuration.
 func (c *Config) Validate() error {
-	if c.Clock == nil {
-		return fmt.Errorf("clock must not be nil")
-	}
-
 	switch c.Mode {
 	case ModeOptClient:
 	case ModeOptServer:

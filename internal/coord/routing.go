@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -30,9 +29,6 @@ const (
 )
 
 type RoutingConfig[K kad.Key[K], N kad.NodeID[K]] struct {
-	// Clock is a clock that may replaced by a mock when testing
-	Clock clock.Clock
-
 	// Logger is a structured logger that will be used when logging.
 	Logger *slog.Logger
 
@@ -117,13 +113,6 @@ type RoutingConfig[K kad.Key[K], N kad.NodeID[K]] struct {
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *RoutingConfig[K, N]) Validate() error {
-	if cfg.Clock == nil {
-		return &coordt.ConfigurationError{
-			Component: "RoutingConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
-
 	if cfg.Logger == nil {
 		return &coordt.ConfigurationError{
 			Component: "RoutingConfig",
@@ -292,7 +281,6 @@ func (cfg *RoutingConfig[K, N]) Validate() error {
 
 func DefaultRoutingConfig[K kad.Key[K], N kad.NodeID[K]]() *RoutingConfig[K, N] {
 	return &RoutingConfig[K, N]{
-		Clock:  clock.New(),
 		Logger: slog.Default(),
 		Tracer: coordt.NoopTracer(),
 		Meter:  coordt.NoopMeter(),
@@ -436,7 +424,7 @@ func NewRoutingBehaviour[K kad.Key[K], N kad.NodeID[K]](self N, rt routing.Routi
 	exploreCfg.RequestConcurrency = cfg.ExploreRequestConcurrency
 	exploreCfg.RequestTimeout = cfg.ExploreRequestTimeout
 
-	schedule, err := routing.NewDynamicExploreSchedule(cfg.ExploreMaximumCpl, cfg.Clock.Now(), cfg.ExploreInterval, cfg.ExploreIntervalMultiplier, cfg.ExploreIntervalJitter)
+	schedule, err := routing.NewDynamicExploreSchedule(cfg.ExploreMaximumCpl, time.Now(), cfg.ExploreInterval, cfg.ExploreIntervalMultiplier, cfg.ExploreIntervalJitter)
 	if err != nil {
 		return nil, fmt.Errorf("explore schedule: %w", err)
 	}
@@ -498,7 +486,7 @@ func ComposeRoutingBehaviour[K kad.Key[K], N kad.NodeID[K]](
 		return nil, fmt.Errorf("create routing_inbound_queue_depth gauge: %w", err)
 	}
 
-	r.readyTimer = newReadyTimer(cfg.Clock, r.ready)
+	r.readyTimer = newReadyTimer(r.ready)
 
 	// The explore schedule is already running, so signal ready once to get the Perform
 	// that arms a timer for it. Otherwise a node that is never notified never explores.
@@ -614,7 +602,7 @@ func (r *RoutingBehaviour[K, N]) perfomNextInbound() (BehaviourEvent, bool) {
 	}
 
 	// every state machine advanced for this event sees the same instant
-	now := r.cfg.Clock.Now()
+	now := time.Now()
 
 	ctx, span := r.cfg.Tracer.Start(pev.Ctx, "PooledQueryBehaviour.perfomNextInbound")
 	defer span.End()
@@ -804,7 +792,7 @@ func (r *RoutingBehaviour[K, N]) perfomNextInbound() (BehaviourEvent, bool) {
 // pollChildren must only be called while r.pendingMu is locked
 func (r *RoutingBehaviour[K, N]) pollChildren(ctx context.Context) {
 	// every state machine advanced for this poll sees the same instant
-	now := r.cfg.Clock.Now()
+	now := time.Now()
 
 	r.pollAgain = false
 

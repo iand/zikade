@@ -3,7 +3,6 @@ package coord
 import (
 	"testing"
 
-	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
@@ -23,7 +22,7 @@ import (
 func TestBroadcastBehaviourContactsAllSeeds(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(6, clock.New())
+	_, nodes, err := linearTopology(6)
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
@@ -73,7 +72,7 @@ func TestBroadcastBehaviourContactsAllSeeds(t *testing.T) {
 func TestBroadcastBehaviourReportsDroppedBroadcastStart(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := linearTopology(2, clock.New())
+	_, nodes, err := linearTopology(2)
 	require.NoError(t, err)
 
 	pool, err := brdcst.NewPool[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, nil)

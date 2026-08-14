@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -38,8 +37,6 @@ type router struct {
 	// timeout is the duration a request has to complete, from opening the stream
 	// to reading the response
 	timeout time.Duration
-
-	clk clock.Clock
 }
 
 var _ coordt.Router[kadt.Key, kadt.PeerID, *pb.Message] = (*router)(nil)
@@ -74,7 +71,7 @@ func (r *router) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Messag
 	}
 	defer s.Close()
 
-	if err = s.SetDeadline(r.clk.Now().Add(r.timeout)); err != nil {
+	if err = s.SetDeadline(time.Now().Add(r.timeout)); err != nil {
 		return nil, fmt.Errorf("set stream deadline: %w", err)
 	}
 
@@ -92,7 +89,7 @@ func (r *router) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Messag
 		return nil, nil
 	}
 
-	start := r.clk.Now()
+	start := time.Now()
 
 	err = w.WriteMsg(req)
 	r.tele.SentRequests.Add(ctx, 1)
@@ -116,7 +113,7 @@ func (r *router) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Messag
 		r.tele.SentRequestErrors.Add(ctx, 1)
 		return nil, err
 	}
-	r.tele.OutboundRequestLatency.Record(ctx, float64(r.clk.Since(start))/float64(time.Millisecond))
+	r.tele.OutboundRequestLatency.Record(ctx, float64(time.Since(start))/float64(time.Millisecond))
 
 	for _, info := range protoResp.CloserPeersAddrInfos() {
 		_ = r.addToPeerStore(ctx, info, time.Hour) // TODO: replace hard coded time.Hour with config

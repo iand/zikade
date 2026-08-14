@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
@@ -22,7 +21,6 @@ import (
 // go-libp2p 0.32 introduced when two hosts dial each other simultaneously over
 // loopback, which is exactly what Connect provokes.
 type Topology struct {
-	clk  clock.Clock
 	tb   testing.TB
 	mn   mocknet.Mocknet
 	dhts map[string]*DHT
@@ -55,7 +53,6 @@ func NewTopology(tb testing.TB) *Topology {
 	})
 
 	return &Topology{
-		clk:  clock.New(),
 		tb:   tb,
 		mn:   mn,
 		dhts: make(map[string]*DHT),
@@ -77,10 +74,6 @@ func (t *Topology) newHost() host.Host {
 	require.NoError(t.tb, t.mn.LinkAll())
 
 	return h
-}
-
-func (t *Topology) SetClock(clk clock.Clock) {
-	t.clk = clk
 }
 
 // AddServer adds a DHT configured as a server to the topology.

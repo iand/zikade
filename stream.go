@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -83,7 +84,7 @@ func (d *DHT) handleNewStream(ctx context.Context, s network.Stream) error {
 	slogger := d.log.With(slog.String("from", s.Conn().RemotePeer().String()))
 
 	// reset the stream after it was idle for too long
-	if err := s.SetDeadline(d.cfg.Clock.Now().Add(d.cfg.TimeoutStreamIdle)); err != nil {
+	if err := s.SetDeadline(time.Now().Add(d.cfg.TimeoutStreamIdle)); err != nil {
 		return fmt.Errorf("set initial stream deadline: %w", err)
 	}
 
@@ -102,7 +103,7 @@ func (d *DHT) handleNewStream(ctx context.Context, s network.Stream) error {
 
 		// we have received a message, start the timer to
 		// track inbound request latency
-		startTime := d.cfg.Clock.Now()
+		startTime := time.Now()
 
 		// 2. unmarshal message into something usable
 		req, err := d.streamUnmarshalMsg(ctx, slogger, data)
@@ -114,7 +115,7 @@ func (d *DHT) handleNewStream(ctx context.Context, s network.Stream) error {
 		reader.ReleaseMsg(data)
 
 		// reset stream deadline
-		if err = s.SetDeadline(d.cfg.Clock.Now().Add(d.cfg.TimeoutStreamIdle)); err != nil {
+		if err = s.SetDeadline(time.Now().Add(d.cfg.TimeoutStreamIdle)); err != nil {
 			return fmt.Errorf("reset stream deadline: %w", err)
 		}
 
@@ -140,11 +141,11 @@ func (d *DHT) handleNewStream(ctx context.Context, s network.Stream) error {
 		slogger.LogAttrs(ctx, slog.LevelDebug, "handling message")
 		resp, err := d.handleMsg(ctx, s.Conn().RemotePeer(), req)
 		if err != nil {
-			slogger.LogAttrs(ctx, slog.LevelDebug, "error handling message", slog.Duration("time", d.cfg.Clock.Since(startTime)), slog.String("error", err.Error()))
+			slogger.LogAttrs(ctx, slog.LevelDebug, "error handling message", slog.Duration("time", time.Since(startTime)), slog.String("error", err.Error()))
 			d.tele.ReceivedMessageErrors.Add(ctx, 1, mattrs)
 			return err
 		}
-		slogger.LogAttrs(ctx, slog.LevelDebug, "handled message", slog.Duration("time", d.cfg.Clock.Since(startTime)))
+		slogger.LogAttrs(ctx, slog.LevelDebug, "handled message", slog.Duration("time", time.Since(startTime)))
 
 		// if the handler didn't return a response, continue reading the stream
 		if resp == nil {
@@ -158,7 +159,7 @@ func (d *DHT) handleNewStream(ctx context.Context, s network.Stream) error {
 		}
 
 		// final logging, metrics tracking
-		latency := d.cfg.Clock.Since(startTime)
+		latency := time.Since(startTime)
 		slogger.LogAttrs(ctx, slog.LevelDebug, "responded to message", slog.Duration("time", latency))
 		d.tele.InboundRequestLatency.Record(ctx, float64(latency.Milliseconds()), mattrs)
 	}

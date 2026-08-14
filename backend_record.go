@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	ds "github.com/ipfs/go-datastore"
 	record "github.com/libp2p/go-libp2p-record"
 	recpb "github.com/libp2p/go-libp2p-record/pb"
@@ -25,7 +24,6 @@ type RecordBackend struct {
 var _ Backend = (*RecordBackend)(nil)
 
 type RecordBackendConfig struct {
-	clk          clock.Clock
 	MaxRecordAge time.Duration
 	Logger       *slog.Logger
 	Tele         *Telemetry
@@ -38,7 +36,6 @@ func DefaultRecordBackendConfig() (*RecordBackendConfig, error) {
 	}
 
 	return &RecordBackendConfig{
-		clk:          clock.New(),
 		Logger:       slog.Default(),
 		Tele:         telemetry,
 		MaxRecordAge: 48 * time.Hour, // empirically measured in: https://github.com/probe-lab/network-measurements/blob/master/results/rfm17-provider-record-liveness.md
@@ -70,7 +67,7 @@ func (r *RecordBackend) Store(ctx context.Context, key string, value any) (any, 
 	}
 
 	// avoid storing arbitrary data, so overwrite that field
-	rec.TimeReceived = r.cfg.clk.Now().UTC().Format(time.RFC3339Nano)
+	rec.TimeReceived = time.Now().UTC().Format(time.RFC3339Nano)
 
 	data, err := proto.Marshal(rec)
 	if err != nil {
@@ -112,7 +109,7 @@ func (r *RecordBackend) Fetch(ctx context.Context, key string) (any, error) {
 
 	// validate that we don't serve stale records.
 	receivedAt, err := time.Parse(time.RFC3339Nano, rec.GetTimeReceived())
-	if err != nil || r.cfg.clk.Since(receivedAt) > r.cfg.MaxRecordAge {
+	if err != nil || time.Since(receivedAt) > r.cfg.MaxRecordAge {
 		errStr := ""
 		if err != nil {
 			errStr = err.Error()

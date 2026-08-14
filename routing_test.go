@@ -9,7 +9,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/boxo/ipns"
 	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-cid"
@@ -57,13 +56,13 @@ func makePkKeyValue(t testing.TB) (string, []byte) {
 	return routing.KeyForPublicKey(id), v
 }
 
-func makeIPNSKeyValue(t testing.TB, clk clock.Clock, priv crypto.PrivKey, seq uint64, ttl time.Duration) (string, []byte) {
+func makeIPNSKeyValue(t testing.TB, priv crypto.PrivKey, seq uint64, ttl time.Duration) (string, []byte) {
 	t.Helper()
 
 	testPath, err := path.NewPath("/ipfs/bafkqac3jobxhgidsn5rww4yk")
 	require.NoError(t, err)
 
-	rec, err := ipns.NewRecord(priv, testPath, seq, clk.Now().Add(ttl), ttl)
+	rec, err := ipns.NewRecord(priv, testPath, seq, time.Now().Add(ttl), ttl)
 	require.NoError(t, err)
 
 	remote, err := peer.IDFromPublicKey(priv.GetPublic())
@@ -509,18 +508,15 @@ func TestDHT_FindProvidersAsync_invalid_key(t *testing.T) {
 func TestDHT_GetValue_happy_path(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	clk := clock.New()
-
 	cfg := DefaultConfig()
-	cfg.Clock = clk
 
 	// generate new identity for the peer that issues the request
 	priv, _, err := crypto.GenerateEd25519Key(rng)
 	require.NoError(t, err)
 
-	_, validValue := makeIPNSKeyValue(t, clk, priv, 1, time.Hour)
-	_, worseValue := makeIPNSKeyValue(t, clk, priv, 0, time.Hour)
-	key, betterValue := makeIPNSKeyValue(t, clk, priv, 2, time.Hour) // higher sequence number means better value
+	_, validValue := makeIPNSKeyValue(t, priv, 1, time.Hour)
+	_, worseValue := makeIPNSKeyValue(t, priv, 0, time.Hour)
+	key, betterValue := makeIPNSKeyValue(t, priv, 2, time.Hour) // higher sequence number means better value
 
 	top := NewTopology(t)
 	d1 := top.AddServer(cfg)
@@ -599,18 +595,15 @@ func TestDHT_SearchValue_returns_best_values(t *testing.T) {
 	// all peers are connected in a chain from d1 to d5 (d1 initiates the query)
 	// assert that we receive two values on the channel (valid + better)
 	ctx := kadtest.CtxShort(t)
-	clk := clock.New()
-
 	cfg := DefaultConfig()
-	cfg.Clock = clk
 
 	// generate new identity for the peer that issues the request
 	priv, _, err := crypto.GenerateEd25519Key(rng)
 	require.NoError(t, err)
 
-	_, validValue := makeIPNSKeyValue(t, clk, priv, 1, time.Hour)
-	_, worseValue := makeIPNSKeyValue(t, clk, priv, 0, time.Hour)
-	key, betterValue := makeIPNSKeyValue(t, clk, priv, 2, time.Hour) // higher sequence number means better value
+	_, validValue := makeIPNSKeyValue(t, priv, 1, time.Hour)
+	_, worseValue := makeIPNSKeyValue(t, priv, 0, time.Hour)
+	key, betterValue := makeIPNSKeyValue(t, priv, 2, time.Hour) // higher sequence number means better value
 
 	top := NewTopology(t)
 	d1 := top.AddServer(cfg)
@@ -673,10 +666,7 @@ func (suite *SearchValueQuorumTestSuite) SetupTest() {
 
 	t := suite.T()
 	ctx := kadtest.CtxShort(t)
-	clk := clock.New()
-
 	cfg := DefaultConfig()
-	cfg.Clock = clk
 	top := NewTopology(t)
 
 	// init privileged DHT server
@@ -693,9 +683,9 @@ func (suite *SearchValueQuorumTestSuite) SetupTest() {
 
 	// generate records
 	remote, priv := newIdentity(t)
-	invalidPutReq := newPutIPNSRequest(t, clk, priv, 3, -time.Hour)
-	suite.key, suite.validValue = makeIPNSKeyValue(t, clk, priv, 1, time.Hour)
-	suite.key, suite.betterValue = makeIPNSKeyValue(t, clk, priv, 2, time.Hour) // higher sequence number means better value
+	invalidPutReq := newPutIPNSRequest(t, priv, 3, -time.Hour)
+	suite.key, suite.validValue = makeIPNSKeyValue(t, priv, 1, time.Hour)
+	suite.key, suite.betterValue = makeIPNSKeyValue(t, priv, 2, time.Hour) // higher sequence number means better value
 
 	// store invalid (expired) record directly in the datastore of
 	// the respective DHT server (bypassing any validation).
@@ -847,11 +837,9 @@ func TestDHT_SearchValue_has_record_locally(t *testing.T) {
 	// Test setup:
 	// There is just one other server that returns a valid value.
 	ctx := kadtest.CtxShort(t)
-	clk := clock.New()
-
 	_, priv := newIdentity(t)
-	_, validValue := makeIPNSKeyValue(t, clk, priv, 1, time.Hour)
-	key, betterValue := makeIPNSKeyValue(t, clk, priv, 2, time.Hour)
+	_, validValue := makeIPNSKeyValue(t, priv, 1, time.Hour)
+	key, betterValue := makeIPNSKeyValue(t, priv, 2, time.Hour)
 
 	top := NewTopology(t)
 	d1 := top.AddServer(nil)

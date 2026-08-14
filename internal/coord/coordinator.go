@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"sync"
 	"sync/atomic"
+	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/ipfs/go-libdht/kad"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -73,9 +73,6 @@ type RoutingNotifier interface {
 }
 
 type CoordinatorConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
-	// Clock is a clock that may replaced by a mock when testing
-	Clock clock.Clock
-
 	// Logger is a structured logger that will be used when logging.
 	Logger *slog.Logger
 
@@ -100,13 +97,6 @@ type CoordinatorConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] st
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *CoordinatorConfig[K, N, M]) Validate() error {
-	if cfg.Clock == nil {
-		return &coordt.ConfigurationError{
-			Component: "CoordinatorConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
-
 	if cfg.Logger == nil {
 		return &coordt.ConfigurationError{
 			Component: "CoordinatorConfig",
@@ -152,27 +142,22 @@ func (cfg *CoordinatorConfig[K, N, M]) Validate() error {
 
 func DefaultCoordinatorConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]]() *CoordinatorConfig[K, N, M] {
 	cfg := &CoordinatorConfig[K, N, M]{
-		Clock: clock.New(),
-
 		Logger:         slog.Default(),
 		MeterProvider:  otel.GetMeterProvider(),
 		TracerProvider: otel.GetTracerProvider(),
 	}
 
 	cfg.Query = *DefaultQueryConfig()
-	cfg.Query.Clock = cfg.Clock
 	cfg.Query.Logger = cfg.Logger.With("behaviour", "pooledquery")
 	cfg.Query.Tracer = cfg.TracerProvider.Tracer(tracerName)
 	cfg.Query.Meter = cfg.MeterProvider.Meter(meterName)
 
 	cfg.Routing = *DefaultRoutingConfig[K, N]()
-	cfg.Routing.Clock = cfg.Clock
 	cfg.Routing.Logger = cfg.Logger.With("behaviour", "routing")
 	cfg.Routing.Tracer = cfg.TracerProvider.Tracer(tracerName)
 	cfg.Routing.Meter = cfg.MeterProvider.Meter(meterName)
 
 	cfg.Brdcst = *DefaultBroadcastConfig[K, N, M]()
-	cfg.Brdcst.Clock = cfg.Clock
 	cfg.Brdcst.Logger = cfg.Logger
 	cfg.Brdcst.Tracer = cfg.TracerProvider.Tracer(tracerName)
 	cfg.Brdcst.Meter = cfg.MeterProvider.Meter(meterName)
@@ -310,13 +295,13 @@ func (c *Coordinator[K, N, M]) eventLoop(ctx context.Context) {
 			perform = c.brdcstBehaviour.Perform
 		}
 
-		start := c.cfg.Clock.Now()
+		start := time.Now()
 
 		if ev, ok := perform(ctx); ok {
 			c.dispatchEvent(ctx, ev)
 		}
 
-		c.tele.RecordEventLoopPass(ctx, c.cfg.Clock.Since(start))
+		c.tele.RecordEventLoopPass(ctx, time.Since(start))
 	}
 }
 
@@ -532,7 +517,7 @@ func (c *Coordinator[K, N, M]) waitForQuery(ctx context.Context, queryID coordt.
 				continue
 			}
 			ctx, ev := wev.Ctx, wev.Event
-			c.cfg.Logger.Debug("query made progress", "query_id", queryID, logAttrNodeID(ev.NodeID), slog.Duration("elapsed", c.cfg.Clock.Since(ev.Stats.Start)), slog.Int("requests", ev.Stats.Requests), slog.Int("failures", ev.Stats.Failure))
+			c.cfg.Logger.Debug("query made progress", "query_id", queryID, logAttrNodeID(ev.NodeID), slog.Duration("elapsed", time.Since(ev.Stats.Start)), slog.Int("requests", ev.Stats.Requests), slog.Int("failures", ev.Stats.Failure))
 			lastStats = coordt.QueryStats{
 				Start:    ev.Stats.Start,
 				Requests: ev.Stats.Requests,
@@ -555,7 +540,7 @@ func (c *Coordinator[K, N, M]) waitForQuery(ctx context.Context, queryID coordt.
 			// drain the progress notification channel
 			for pev := range waiter.Progressed() {
 				ctx, ev := pev.Ctx, pev.Event
-				c.cfg.Logger.Debug("query made progress", "query_id", queryID, logAttrNodeID(ev.NodeID), slog.Duration("elapsed", c.cfg.Clock.Since(ev.Stats.Start)), slog.Int("requests", ev.Stats.Requests), slog.Int("failures", ev.Stats.Failure))
+				c.cfg.Logger.Debug("query made progress", "query_id", queryID, logAttrNodeID(ev.NodeID), slog.Duration("elapsed", time.Since(ev.Stats.Start)), slog.Int("requests", ev.Stats.Requests), slog.Int("failures", ev.Stats.Failure))
 				lastStats = coordt.QueryStats{
 					Start:    ev.Stats.Start,
 					Requests: ev.Stats.Requests,

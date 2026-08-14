@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	ds "github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -44,47 +44,51 @@ func newBackendProvider(t testing.TB, cfg *ProvidersBackendConfig) *ProvidersBac
 }
 
 func TestProvidersBackend_GarbageCollection(t *testing.T) {
-	clk := clock.NewMock()
+	synctest.Test(t, func(t *testing.T) {
+		// the datastore's pool drain goroutine finishes shutting down on a timer of its
+		// own, so the bubble needs a last tick of fake time once it has been closed.
+		// Cleanups run last-registered-first.
+		t.Cleanup(func() { time.Sleep(2 * time.Second) })
 
-	cfg, err := DefaultProviderBackendConfig()
-	require.NoError(t, err)
+		cfg, err := DefaultProviderBackendConfig()
+		require.NoError(t, err)
 
-	cfg.clk = clk
-	cfg.Logger = devnull
+		cfg.Logger = devnull
 
-	b := newBackendProvider(t, cfg)
+		b := newBackendProvider(t, cfg)
 
-	// start the garbage collection process
-	b.StartGarbageCollection()
-	t.Cleanup(func() { b.StopGarbageCollection() })
+		// start the garbage collection process
+		b.StartGarbageCollection()
+		t.Cleanup(func() { b.StopGarbageCollection() })
 
-	// write random record to datastore and peerstore
-	ctx := context.Background()
-	p := newAddrInfo(t)
+		// write random record to datastore and peerstore
+		ctx := context.Background()
+		p := newAddrInfo(t)
 
-	// write to datastore
-	dsKey := newDatastoreKey(namespaceProviders, "random-key", string(p.ID))
-	rec := expiryRecord{expiry: clk.Now()}
-	err = b.datastore.Put(ctx, dsKey, rec.MarshalBinary())
-	require.NoError(t, err)
+		// write to datastore
+		dsKey := newDatastoreKey(namespaceProviders, "random-key", string(p.ID))
+		rec := expiryRecord{expiry: time.Now()}
+		err = b.datastore.Put(ctx, dsKey, rec.MarshalBinary())
+		require.NoError(t, err)
 
-	// write to peerstore
-	b.addrBook.AddAddrs(p.ID, p.Addrs, time.Hour)
+		// write to peerstore
+		b.addrBook.AddAddrs(p.ID, p.Addrs, time.Hour)
 
-	// advance clock half the validity time and check if record is still there
-	clk.Add(cfg.ProvideValidity / 2)
+		// advance clock half the validity time and check if record is still there
+		time.Sleep(cfg.ProvideValidity / 2)
 
-	// we expect the record to still be there after half the ProvideValidity
-	_, err = b.datastore.Get(ctx, dsKey)
-	require.NoError(t, err)
+		// we expect the record to still be there after half the ProvideValidity
+		_, err = b.datastore.Get(ctx, dsKey)
+		require.NoError(t, err)
 
-	// advance clock another time and check if the record was GC'd now
-	clk.Add(cfg.ProvideValidity + cfg.GCInterval)
+		// advance clock another time and check if the record was GC'd now
+		time.Sleep(cfg.ProvideValidity + cfg.GCInterval)
 
-	// we expect the record to be GC'd now
-	val, err := b.datastore.Get(ctx, dsKey)
-	assert.ErrorIs(t, err, ds.ErrNotFound)
-	assert.Nil(t, val)
+		// we expect the record to be GC'd now
+		val, err := b.datastore.Get(ctx, dsKey)
+		assert.ErrorIs(t, err, ds.ErrNotFound)
+		assert.Nil(t, val)
+	})
 }
 
 func TestProvidersBackend_GarbageCollection_lifecycle_thread_safe(t *testing.T) {

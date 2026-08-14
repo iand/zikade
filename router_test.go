@@ -44,7 +44,6 @@ func TestRouterRequestTimesOutOnSilentPeer(t *testing.T) {
 		protocolID: cfg.ProtocolID,
 		tele:       tele,
 		timeout:    cfg.TimeoutStreamRequest,
-		clk:        cfg.Clock,
 	}
 
 	start := time.Now()

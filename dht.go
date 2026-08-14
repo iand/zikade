@@ -117,24 +117,20 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 
 	// instantiate a new Kademlia DHT coordinator.
 	coordCfg := coord.DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
-	coordCfg.Clock = cfg.Clock
 	coordCfg.Logger = cfg.Logger
 	coordCfg.MeterProvider = cfg.MeterProvider
 	coordCfg.TracerProvider = cfg.TracerProvider
 
-	coordCfg.Query.Clock = cfg.Clock
 	coordCfg.Query.Logger = cfg.Logger.With("behaviour", "pooledquery")
 	coordCfg.Query.Concurrency = cfg.Query.Concurrency
 	coordCfg.Query.Timeout = cfg.Query.Timeout
 	coordCfg.Query.RequestConcurrency = cfg.Query.RequestConcurrency
 	coordCfg.Query.RequestTimeout = cfg.Query.RequestTimeout
 
-	coordCfg.Routing.Clock = cfg.Clock
 	coordCfg.Routing.Logger = cfg.Logger.With("behaviour", "routing")
 	coordCfg.Routing.BootstrapPeers = d.addBootstrapPeers()
 	coordCfg.Routing.BootstrapMinimumPopulation = cfg.BootstrapMinimumPopulation
 
-	coordCfg.Brdcst.Clock = cfg.Clock
 	coordCfg.Brdcst.Logger = cfg.Logger.With("behaviour", "pooledbroadcast")
 	coordCfg.Brdcst.VerifyResponse = verifyStoredRecord
 
@@ -145,7 +141,6 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		protocolID: cfg.ProtocolID,
 		tele:       d.tele,
 		timeout:    cfg.TimeoutStreamRequest,
-		clk:        cfg.Clock,
 	}
 	d.kad, err = coord.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, cplutil.GenRandPeerID, coordCfg)
 	if err != nil {
@@ -215,7 +210,6 @@ func (d *DHT) initAminoBackends() (map[string]Backend, error) {
 	pbeCfg.Logger = d.cfg.Logger
 	pbeCfg.AddressFilter = d.cfg.AddressFilter
 	pbeCfg.Tele = d.tele
-	pbeCfg.clk = d.cfg.Clock
 
 	pbe, err := NewBackendProvider(d.host.Peerstore(), dstore, pbeCfg)
 	if err != nil {
@@ -228,7 +222,6 @@ func (d *DHT) initAminoBackends() (map[string]Backend, error) {
 	}
 	rbeCfg.Logger = d.cfg.Logger
 	rbeCfg.Tele = d.tele
-	rbeCfg.clk = d.cfg.Clock
 
 	ipnsBe, err := NewBackendIPNS(dstore, d.host.Peerstore(), rbeCfg)
 	if err != nil {

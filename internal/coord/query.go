@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
@@ -18,9 +17,6 @@ import (
 )
 
 type QueryConfig struct {
-	// Clock is a clock that may replaced by a mock when testing
-	Clock clock.Clock
-
 	// Logger is a structured logger that will be used when logging.
 	Logger *slog.Logger
 
@@ -51,13 +47,6 @@ type QueryConfig struct {
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *QueryConfig) Validate() error {
-	if cfg.Clock == nil {
-		return &coordt.ConfigurationError{
-			Component: "PooledQueryConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
-
 	if cfg.Logger == nil {
 		return &coordt.ConfigurationError{
 			Component: "PooledQueryConfig",
@@ -118,7 +107,6 @@ func (cfg *QueryConfig) Validate() error {
 
 func DefaultQueryConfig() *QueryConfig {
 	return &QueryConfig{
-		Clock:              clock.New(),
 		Logger:             slog.Default(),
 		Tracer:             coordt.NoopTracer(),
 		Meter:              coordt.NoopMeter(),
@@ -226,7 +214,7 @@ func NewQueryBehaviour[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](se
 		return nil, fmt.Errorf("create query_inbound_queue_depth gauge: %w", err)
 	}
 
-	h.readyTimer = newReadyTimer(cfg.Clock, h.ready)
+	h.readyTimer = newReadyTimer(h.ready)
 
 	return h, nil
 }
@@ -311,7 +299,7 @@ func (p *QueryBehaviour[K, N, M]) Perform(ctx context.Context) (out BehaviourEve
 	}
 
 	// poll the query pool to trigger any timeouts and other scheduled work
-	ev, ok = p.advancePool(ctx, p.cfg.Clock.Now(), &query.EventPoolPoll{})
+	ev, ok = p.advancePool(ctx, time.Now(), &query.EventPoolPoll{})
 	if ok {
 		return ev, true
 	}
@@ -423,7 +411,7 @@ func (p *QueryBehaviour[K, N, M]) perfomNextInbound(ctx context.Context) (Behavi
 	}
 
 	// attempt to advance the query pool
-	return p.advancePool(pev.Ctx, p.cfg.Clock.Now(), cmd)
+	return p.advancePool(pev.Ctx, time.Now(), cmd)
 }
 
 // updateReadyStatus signals whether the behaviour has further work to do. It is

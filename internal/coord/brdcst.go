@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
@@ -18,9 +17,6 @@ import (
 )
 
 type BroadcastConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
-	// Clock is a clock that may replaced by a mock when testing
-	Clock clock.Clock
-
 	// Logger is a structured logger that will be used when logging.
 	Logger *slog.Logger
 
@@ -44,13 +40,6 @@ type BroadcastConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] stru
 
 // Validate checks the configuration options and returns an error if any have invalid values.
 func (cfg *BroadcastConfig[K, N, M]) Validate() error {
-	if cfg.Clock == nil {
-		return &coordt.ConfigurationError{
-			Component: "BroadcastConfig",
-			Err:       fmt.Errorf("clock must not be nil"),
-		}
-	}
-
 	if cfg.Logger == nil {
 		return &coordt.ConfigurationError{
 			Component: "BroadcastConfig",
@@ -84,7 +73,6 @@ func (cfg *BroadcastConfig[K, N, M]) Validate() error {
 
 func DefaultBroadcastConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]]() *BroadcastConfig[K, N, M] {
 	return &BroadcastConfig[K, N, M]{
-		Clock:         clock.New(),
 		Logger:        slog.Default(),
 		Tracer:        coordt.NoopTracer(),
 		Meter:         coordt.NoopMeter(),
@@ -95,9 +83,6 @@ func DefaultBroadcastConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N
 type PooledBroadcastBehaviour[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	logger *slog.Logger
 	tracer trace.Tracer
-
-	// clk supplies the instant each advance of the pool is applied at.
-	clk clock.Clock
 
 	// verifyResponse reports whether a reply shows that a record was stored.
 	verifyResponse func(req, resp M) error
@@ -151,7 +136,6 @@ func NewPooledBroadcastBehaviour[K kad.Key[K], N kad.NodeID[K], M coordt.Message
 
 	b := &PooledBroadcastBehaviour[K, N, M]{
 		pool:      brdcstPool,
-		clk:       cfg.Clock,
 		notifiers: make(map[coordt.QueryID]*queryNotifier[K, N, M, *EventBroadcastFinished[K, N]]),
 		inbound:   newInboundQueue(cfg.QueueCapacity),
 		ready:     make(chan struct{}, 1),
@@ -187,7 +171,7 @@ func NewPooledBroadcastBehaviour[K kad.Key[K], N kad.NodeID[K], M coordt.Message
 		return nil, fmt.Errorf("create broadcast_inbound_queue_depth gauge: %w", err)
 	}
 
-	b.readyTimer = newReadyTimer(cfg.Clock, b.ready)
+	b.readyTimer = newReadyTimer(b.ready)
 
 	return b, nil
 }
@@ -253,7 +237,7 @@ func (b *PooledBroadcastBehaviour[K, N, M]) Perform(ctx context.Context) (out Be
 	}
 
 	// poll the broadcast pool to trigger any timeouts and other scheduled work
-	ev, ok = b.advancePool(ctx, b.clk.Now(), &brdcst.EventPoolPoll{})
+	ev, ok = b.advancePool(ctx, time.Now(), &brdcst.EventPoolPoll{})
 	if ok {
 		return ev, true
 	}
@@ -411,7 +395,7 @@ func (b *PooledBroadcastBehaviour[K, N, M]) perfomNextInbound(ctx context.Contex
 	}
 
 	// attempt to advance the broadcast pool
-	return b.advancePool(ctx, b.clk.Now(), cmd)
+	return b.advancePool(ctx, time.Now(), cmd)
 }
 
 func (b *PooledBroadcastBehaviour[K, N, M]) advancePool(ctx context.Context, now time.Time, ev brdcst.PoolEvent) (out BehaviourEvent, term bool) {

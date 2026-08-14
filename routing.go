@@ -272,7 +272,7 @@ func (d *DHT) putValueLocal(ctx context.Context, key string, value []byte) error
 	}
 
 	rec := record.MakePutRecord(key, value)
-	rec.TimeReceived = d.cfg.Clock.Now().UTC().Format(time.RFC3339Nano)
+	rec.TimeReceived = time.Now().UTC().Format(time.RFC3339Nano)
 
 	_, err = b.Store(ctx, path, rec)
 	if err != nil {

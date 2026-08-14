@@ -125,12 +125,6 @@ func TestConfig_Validate(t *testing.T) {
 		assert.Error(t, cfg.Validate())
 	})
 
-	t.Run("nil clock", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.Clock = nil
-		assert.Error(t, cfg.Validate())
-	})
-
 	t.Run("zero bucket size", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.BucketSize = 0
