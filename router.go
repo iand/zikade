@@ -35,6 +35,10 @@ type router struct {
 	// tele holds a reference to a telemetry struct
 	tele *Telemetry
 
+	// timeout is the duration a request has to complete, from opening the stream
+	// to reading the response
+	timeout time.Duration
+
 	clk clock.Clock
 }
 
@@ -69,6 +73,10 @@ func (r *router) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Messag
 		return nil, fmt.Errorf("stream creation: %w", err)
 	}
 	defer s.Close()
+
+	if err = s.SetDeadline(r.clk.Now().Add(r.timeout)); err != nil {
+		return nil, fmt.Errorf("set stream deadline: %w", err)
+	}
 
 	w := pbio.NewDelimitedWriter(s)
 	reader := msgio.NewVarintReaderSize(s, network.MessageSizeMax)

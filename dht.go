@@ -136,6 +136,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		host:       h,
 		protocolID: cfg.ProtocolID,
 		tele:       d.tele,
+		timeout:    cfg.TimeoutStreamRequest,
 		clk:        cfg.Clock,
 	}
 	d.kad, err = coord.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, coordCfg)

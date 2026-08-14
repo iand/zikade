@@ -188,6 +188,7 @@ func newInteropRouter(d *DHT) *router {
 		host:       d.host,
 		protocolID: d.cfg.ProtocolID,
 		tele:       d.tele,
+		timeout:    d.cfg.TimeoutStreamRequest,
 		clk:        d.cfg.Clock,
 	}
 }
