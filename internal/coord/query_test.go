@@ -12,11 +12,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
-	"github.com/probe-lab/zikade/internal/coord/cplutil"
 	"github.com/probe-lab/zikade/internal/kadtest"
-	"github.com/probe-lab/zikade/internal/nettest"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
+	"github.com/probe-lab/zikade/internal/tiny"
 )
 
 func TestQueryConfigValidate(t *testing.T) {
@@ -90,12 +87,12 @@ type QueryBehaviourBaseTestSuite struct {
 	suite.Suite
 
 	cfg   *QueryConfig
-	top   *nettest.Topology
-	nodes []*nettest.Peer
+	top   *testTopology
+	nodes []*testPeer
 }
 
 func (ts *QueryBehaviourBaseTestSuite) SetupTest() {
-	top, nodes, err := nettest.LinearTopology(4, clock.New())
+	top, nodes, err := linearTopology(4, clock.New())
 	ts.Require().NoError(err)
 
 	ts.top = top
@@ -112,11 +109,11 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesNoProgress() {
 	rt := ts.nodes[0].RoutingTable
 	seeds := rt.NearestNodes(target, 5)
 
-	b, err := NewQueryBehaviour[kadt.Key, kadt.PeerID, *pb.Message](ts.nodes[0].NodeID, ts.cfg)
+	b, err := NewQueryBehaviour[tiny.Key, tiny.Node, tiny.Message](ts.nodes[0].NodeID, ts.cfg)
 	ts.Require().NoError(err)
 
-	waiter := NewQueryWaiter[kadt.Key, kadt.PeerID, *pb.Message](5)
-	cmd := &EventStartFindCloserQuery[kadt.Key, kadt.PeerID, *pb.Message]{
+	waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
+	cmd := &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID:           "test",
 		Target:            target,
 		KnownClosestNodes: seeds,
@@ -130,13 +127,13 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesNoProgress() {
 	// behaviour should emit EventOutboundGetCloserNodes to start the query
 	bev, ok := b.Perform(ctx)
 	ts.Require().True(ok)
-	ts.Require().IsType(&EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, bev)
+	ts.Require().IsType(&EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
 
-	egc := bev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])
+	egc := bev.(*EventOutboundGetCloserNodes[tiny.Key, tiny.Node])
 	ts.Require().True(egc.To.Equal(ts.nodes[1].NodeID))
 
 	// notify failure
-	b.Notify(ctx, &EventGetCloserNodesFailure[kadt.Key, kadt.PeerID]{
+	b.Notify(ctx, &EventGetCloserNodesFailure[tiny.Key, tiny.Node]{
 		QueryID: "test",
 		To:      egc.To,
 		Target:  target,
@@ -145,10 +142,10 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesNoProgress() {
 	// query will process the response and notify that node 1 is non connective
 	bev, ok = b.Perform(ctx)
 	ts.Require().True(ok)
-	ts.Require().IsType(&EventNotifyNonConnectivity[kadt.Key, kadt.PeerID]{}, bev)
+	ts.Require().IsType(&EventNotifyNonConnectivity[tiny.Key, tiny.Node]{}, bev)
 
 	// ensure that the waiter received query finished event
-	kadtest.ReadItem[CtxEvent[*EventQueryFinished[kadt.Key, kadt.PeerID]]](t, ctx, waiter.Finished())
+	kadtest.ReadItem[CtxEvent[*EventQueryFinished[tiny.Key, tiny.Node]]](t, ctx, waiter.Finished())
 }
 
 func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryProgressed() {
@@ -159,11 +156,11 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryProgressed() {
 	rt := ts.nodes[0].RoutingTable
 	seeds := rt.NearestNodes(target, 5)
 
-	b, err := NewQueryBehaviour[kadt.Key, kadt.PeerID, *pb.Message](ts.nodes[0].NodeID, ts.cfg)
+	b, err := NewQueryBehaviour[tiny.Key, tiny.Node, tiny.Message](ts.nodes[0].NodeID, ts.cfg)
 	ts.Require().NoError(err)
 
-	waiter := NewQueryWaiter[kadt.Key, kadt.PeerID, *pb.Message](5)
-	cmd := &EventStartFindCloserQuery[kadt.Key, kadt.PeerID, *pb.Message]{
+	waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
+	cmd := &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID:           "test",
 		Target:            target,
 		KnownClosestNodes: seeds,
@@ -177,13 +174,13 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryProgressed() {
 	// behaviour should emit EventOutboundGetCloserNodes to start the query
 	bev, ok := b.Perform(ctx)
 	ts.Require().True(ok)
-	ts.Require().IsType(&EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, bev)
+	ts.Require().IsType(&EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
 
-	egc := bev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])
+	egc := bev.(*EventOutboundGetCloserNodes[tiny.Key, tiny.Node])
 	ts.Require().True(egc.To.Equal(ts.nodes[1].NodeID))
 
 	// notify success
-	b.Notify(ctx, &EventGetCloserNodesSuccess[kadt.Key, kadt.PeerID]{
+	b.Notify(ctx, &EventGetCloserNodesSuccess[tiny.Key, tiny.Node]{
 		QueryID:     "test",
 		To:          egc.To,
 		Target:      target,
@@ -193,10 +190,10 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryProgressed() {
 	// query will process the response and ask node 1 for closer nodes
 	bev, ok = b.Perform(ctx)
 	ts.Require().True(ok)
-	ts.Require().IsType(&EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, bev)
+	ts.Require().IsType(&EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
 
 	// ensure that the waiter received query progressed event
-	kadtest.ReadItem[CtxEvent[*EventQueryProgressed[kadt.Key, kadt.PeerID, *pb.Message]]](t, ctx, waiter.Progressed())
+	kadtest.ReadItem[CtxEvent[*EventQueryProgressed[tiny.Key, tiny.Node, tiny.Message]]](t, ctx, waiter.Progressed())
 }
 
 func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryFinished() {
@@ -207,11 +204,11 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryFinished() {
 	rt := ts.nodes[0].RoutingTable
 	seeds := rt.NearestNodes(target, 5)
 
-	b, err := NewQueryBehaviour[kadt.Key, kadt.PeerID, *pb.Message](ts.nodes[0].NodeID, ts.cfg)
+	b, err := NewQueryBehaviour[tiny.Key, tiny.Node, tiny.Message](ts.nodes[0].NodeID, ts.cfg)
 	ts.Require().NoError(err)
 
-	waiter := NewQueryWaiter[kadt.Key, kadt.PeerID, *pb.Message](5)
-	cmd := &EventStartFindCloserQuery[kadt.Key, kadt.PeerID, *pb.Message]{
+	waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
+	cmd := &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID:           "test",
 		Target:            target,
 		KnownClosestNodes: seeds,
@@ -225,13 +222,13 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryFinished() {
 	// behaviour should emit EventOutboundGetCloserNodes to start the query
 	bev, ok := b.Perform(ctx)
 	ts.Require().True(ok)
-	ts.Require().IsType(&EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, bev)
+	ts.Require().IsType(&EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
 
-	egc := bev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])
+	egc := bev.(*EventOutboundGetCloserNodes[tiny.Key, tiny.Node])
 	ts.Require().True(egc.To.Equal(ts.nodes[1].NodeID))
 
 	// notify success
-	b.Notify(ctx, &EventGetCloserNodesSuccess[kadt.Key, kadt.PeerID]{
+	b.Notify(ctx, &EventGetCloserNodesSuccess[tiny.Key, tiny.Node]{
 		QueryID:     "test",
 		To:          egc.To,
 		Target:      target,
@@ -243,18 +240,18 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryFinished() {
 		bev, ok = b.Perform(ctx)
 		ts.Require().True(ok)
 
-		egc, ok = bev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])
+		egc, ok = bev.(*EventOutboundGetCloserNodes[tiny.Key, tiny.Node])
 		if ok {
 			break
 		}
 	}
 
 	// ensure that the waiter received query progressed event
-	wev := kadtest.ReadItem[CtxEvent[*EventQueryProgressed[kadt.Key, kadt.PeerID, *pb.Message]]](t, ctx, waiter.Progressed())
+	wev := kadtest.ReadItem[CtxEvent[*EventQueryProgressed[tiny.Key, tiny.Node, tiny.Message]]](t, ctx, waiter.Progressed())
 	ts.Require().True(wev.Event.NodeID.Equal(ts.nodes[1].NodeID))
 
 	// notify success for last seen EventOutboundGetCloserNodes but supply no further nodes
-	b.Notify(ctx, &EventGetCloserNodesSuccess[kadt.Key, kadt.PeerID]{
+	b.Notify(ctx, &EventGetCloserNodesSuccess[tiny.Key, tiny.Node]{
 		QueryID: "test",
 		To:      egc.To,
 		Target:  target,
@@ -269,10 +266,10 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryFinished() {
 	}
 
 	// ensure that the waiter received query progressed event
-	kadtest.ReadItem[CtxEvent[*EventQueryProgressed[kadt.Key, kadt.PeerID, *pb.Message]]](t, ctx, waiter.Progressed())
+	kadtest.ReadItem[CtxEvent[*EventQueryProgressed[tiny.Key, tiny.Node, tiny.Message]]](t, ctx, waiter.Progressed())
 
 	// ensure that the waiter received query  event
-	kadtest.ReadItem[CtxEvent[*EventQueryFinished[kadt.Key, kadt.PeerID]]](t, ctx, waiter.Finished())
+	kadtest.ReadItem[CtxEvent[*EventQueryFinished[tiny.Key, tiny.Node]]](t, ctx, waiter.Finished())
 }
 
 // TestQueryBehaviourRequestConcurrency asserts that a query with more seeds
@@ -285,17 +282,17 @@ func (ts *QueryBehaviourBaseTestSuite) TestNotifiesQueryFinished() {
 func TestQueryBehaviourRequestConcurrency(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := nettest.LinearTopology(6, clock.New())
+	_, nodes, err := linearTopology(6, clock.New())
 	require.NoError(t, err)
 
 	cfg := DefaultQueryConfig()
 	cfg.Concurrency = 3
 	cfg.RequestConcurrency = 3
 
-	b, err := NewQueryBehaviour[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, cfg)
+	b, err := NewQueryBehaviour[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, cfg)
 	require.NoError(t, err)
 
-	seeds := []kadt.PeerID{
+	seeds := []tiny.Node{
 		nodes[1].NodeID,
 		nodes[2].NodeID,
 		nodes[3].NodeID,
@@ -303,7 +300,7 @@ func TestQueryBehaviourRequestConcurrency(t *testing.T) {
 		nodes[5].NodeID,
 	}
 
-	b.Notify(ctx, &EventStartFindCloserQuery[kadt.Key, kadt.PeerID, *pb.Message]{
+	b.Notify(ctx, &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID:           "test",
 		Target:            nodes[5].NodeID.Key(),
 		KnownClosestNodes: seeds,
@@ -312,9 +309,9 @@ func TestQueryBehaviourRequestConcurrency(t *testing.T) {
 
 	evs := PerformWhileReady(t, ctx, b)
 
-	var requested []kadt.PeerID
+	var requested []tiny.Node
 	for _, ev := range evs {
-		if oev, ok := ev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]); ok {
+		if oev, ok := ev.(*EventOutboundGetCloserNodes[tiny.Key, tiny.Node]); ok {
 			requested = append(requested, oev.To)
 		}
 	}
@@ -328,7 +325,7 @@ func TestQueryBehaviourNotifiesQueryTimeout(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
 	clk := clock.NewMock()
-	_, nodes, err := nettest.LinearTopology(3, clk)
+	_, nodes, err := linearTopology(3, clk)
 	require.NoError(t, err)
 
 	cfg := DefaultQueryConfig()
@@ -343,21 +340,21 @@ func TestQueryBehaviourNotifiesQueryTimeout(t *testing.T) {
 	// nodes to contact rather than by running out of time
 	cfg.RequestTimeout = time.Hour
 
-	b, err := NewQueryBehaviour[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, cfg)
+	b, err := NewQueryBehaviour[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, cfg)
 	require.NoError(t, err)
 
-	waiter := NewQueryWaiter[kadt.Key, kadt.PeerID, *pb.Message](5)
-	b.Notify(ctx, &EventStartFindCloserQuery[kadt.Key, kadt.PeerID, *pb.Message]{
+	waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
+	b.Notify(ctx, &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID:           "test",
 		Target:            nodes[2].NodeID.Key(),
-		KnownClosestNodes: []kadt.PeerID{nodes[1].NodeID},
+		KnownClosestNodes: []tiny.Node{nodes[1].NodeID},
 		Notify:            waiter,
 		NumResults:        10,
 	})
 
 	bev, ok := b.Perform(ctx)
 	require.True(t, ok)
-	require.IsType(t, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, bev)
+	require.IsType(t, &EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
 	require.Len(t, b.notifiers, 1)
 
 	// the node never responds and the query runs out of time
@@ -365,7 +362,7 @@ func TestQueryBehaviourNotifiesQueryTimeout(t *testing.T) {
 	_, ok = b.Perform(ctx)
 	require.False(t, ok)
 
-	wev := kadtest.ReadItem[CtxEvent[*EventQueryFinished[kadt.Key, kadt.PeerID]]](t, ctx, waiter.Finished())
+	wev := kadtest.ReadItem[CtxEvent[*EventQueryFinished[tiny.Key, tiny.Node]]](t, ctx, waiter.Finished())
 	require.ErrorIs(t, wev.Event.Err, coordt.ErrQueryTimeout)
 	require.Equal(t, coordt.QueryID("test"), wev.Event.QueryID)
 
@@ -381,10 +378,10 @@ func TestQueryTimeoutUnblocksWaitForQuery(t *testing.T) {
 	queryID := coordt.QueryID("test")
 
 	clk := clock.NewMock()
-	_, nodes, err := nettest.LinearTopology(3, clk)
+	_, nodes, err := linearTopology(3, clk)
 	require.NoError(t, err)
 
-	cfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
+	cfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
 	cfg.Clock = clk
 	cfg.Query.Clock = clk
 	cfg.Query.Timeout = time.Minute
@@ -397,32 +394,32 @@ func TestQueryTimeoutUnblocksWaitForQuery(t *testing.T) {
 
 	// the coordinator is closed immediately so the test drives the query behaviour
 	// itself rather than racing the event loop
-	c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, cplutil.GenRandPeerID, cfg)
+	c, err := NewCoordinator[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, tiny.NodeWithCpl, cfg)
 	require.NoError(t, err)
 	require.NoError(t, c.Close())
 
-	waiter := NewQueryWaiter[kadt.Key, kadt.PeerID, *pb.Message](5)
+	waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
 
 	waiterDone := make(chan struct{})
 	var waitErr error
 	go func() {
 		defer close(waiterDone)
-		_, _, waitErr = c.waitForQuery(ctx, queryID, waiter, func(ctx context.Context, id kadt.PeerID, resp *pb.Message, stats coordt.QueryStats) error {
+		_, _, waitErr = c.waitForQuery(ctx, queryID, waiter, func(ctx context.Context, id tiny.Node, resp tiny.Message, stats coordt.QueryStats) error {
 			return nil
 		})
 	}()
 
-	c.queryBehaviour.Notify(ctx, &EventStartFindCloserQuery[kadt.Key, kadt.PeerID, *pb.Message]{
+	c.queryBehaviour.Notify(ctx, &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID:           queryID,
 		Target:            nodes[2].NodeID.Key(),
-		KnownClosestNodes: []kadt.PeerID{nodes[1].NodeID},
+		KnownClosestNodes: []tiny.Node{nodes[1].NodeID},
 		Notify:            waiter,
 		NumResults:        10,
 	})
 
 	bev, ok := c.queryBehaviour.Perform(ctx)
 	require.True(t, ok)
-	require.IsType(t, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, bev)
+	require.IsType(t, &EventOutboundGetCloserNodes[tiny.Key, tiny.Node]{}, bev)
 
 	// the node never responds and the query runs out of time
 	clk.Add(2 * cfg.Query.Timeout)
@@ -437,34 +434,34 @@ func TestQueryTimeoutUnblocksWaitForQuery(t *testing.T) {
 // does not deadlock against the behaviour producing them.
 func TestQuery_deadlock_regression(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
-	msg := &pb.Message{}
+	msg := tiny.Message{}
 	queryID := coordt.QueryID("test")
 
-	_, nodes, err := nettest.LinearTopology(3, clock.New())
+	_, nodes, err := linearTopology(3, clock.New())
 	require.NoError(t, err)
 
 	// it would be better to just work with the queryBehaviour in this test.
 	// However, we want to test as many parts as possible and waitForQuery
 	// is defined on the coordinator. Therfore, we instantiate a coordinator
 	// and close it immediately to manually control state machine progression.
-	c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, cplutil.GenRandPeerID, nil)
+	c, err := NewCoordinator[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, tiny.NodeWithCpl, nil)
 	require.NoError(t, err)
 	require.NoError(t, c.Close()) // close immediately so that we control the state machine progression
 
 	// define a function that produces success messages
-	successMsg := func(to kadt.PeerID, closer ...kadt.PeerID) *EventSendMessageSuccess[kadt.Key, kadt.PeerID, *pb.Message] {
-		return &EventSendMessageSuccess[kadt.Key, kadt.PeerID, *pb.Message]{
+	successMsg := func(to tiny.Node, closer ...tiny.Node) *EventSendMessageSuccess[tiny.Key, tiny.Node, tiny.Message] {
+		return &EventSendMessageSuccess[tiny.Key, tiny.Node, tiny.Message]{
 			QueryID:     queryID,
 			Request:     msg,
 			To:          to,
-			Response:    nil,
+			Response:    tiny.Message{},
 			CloserNodes: closer,
 		}
 	}
 
 	// start query
-	waiter := NewQueryWaiter[kadt.Key, kadt.PeerID, *pb.Message](5)
-	wrappedWaiter := NewQueryMonitorHook[kadt.Key, kadt.PeerID, *pb.Message, *EventQueryFinished[kadt.Key, kadt.PeerID]](waiter)
+	waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](5)
+	wrappedWaiter := NewQueryMonitorHook[tiny.Key, tiny.Node, tiny.Message, *EventQueryFinished[tiny.Key, tiny.Node]](waiter)
 
 	var waitErr error
 	waiterDone := make(chan struct{})
@@ -472,18 +469,18 @@ func TestQuery_deadlock_regression(t *testing.T) {
 	go func() {
 		defer close(waiterDone)
 		defer close(waiterMsg)
-		_, _, waitErr = c.waitForQuery(ctx, queryID, waiter, func(ctx context.Context, id kadt.PeerID, resp *pb.Message, stats coordt.QueryStats) error {
+		_, _, waitErr = c.waitForQuery(ctx, queryID, waiter, func(ctx context.Context, id tiny.Node, resp tiny.Message, stats coordt.QueryStats) error {
 			waiterMsg <- struct{}{}
 			return coordt.ErrSkipRemaining
 		})
 	}()
 
 	// start the message query
-	c.queryBehaviour.Notify(ctx, &EventStartMessageQuery[kadt.Key, kadt.PeerID, *pb.Message]{
+	c.queryBehaviour.Notify(ctx, &EventStartMessageQuery[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID:           queryID,
 		Target:            msg.Target(),
 		Message:           msg,
-		KnownClosestNodes: []kadt.PeerID{nodes[1].NodeID},
+		KnownClosestNodes: []tiny.Node{nodes[1].NodeID},
 		Notify:            wrappedWaiter,
 		NumResults:        0,
 	})
@@ -491,7 +488,7 @@ func TestQuery_deadlock_regression(t *testing.T) {
 	// advance state machines and assert that the state machine
 	// wants to send an outbound message to another peer
 	ev, _ := c.queryBehaviour.Perform(ctx)
-	require.IsType(t, &EventOutboundSendMessage[kadt.Key, kadt.PeerID, *pb.Message]{}, ev)
+	require.IsType(t, &EventOutboundSendMessage[tiny.Key, tiny.Node, tiny.Message]{}, ev)
 
 	// simulate a successful response from another node that returns one new node
 	// This should result in a message for the waiter
@@ -509,9 +506,9 @@ func TestQuery_deadlock_regression(t *testing.T) {
 		ev, ok := c.queryBehaviour.Perform(ctx)
 		require.True(t, ok)
 		switch ev.(type) {
-		case *EventAddNode[kadt.Key, kadt.PeerID]:
+		case *EventAddNode[tiny.Key, tiny.Node]:
 			addNode++
-		case *EventOutboundSendMessage[kadt.Key, kadt.PeerID, *pb.Message]:
+		case *EventOutboundSendMessage[tiny.Key, tiny.Node, tiny.Message]:
 			sendMessage++
 		default:
 			t.Fatalf("unexpected event %T", ev)
@@ -560,20 +557,20 @@ func TestQuery_deadlock_regression(t *testing.T) {
 func TestQueryBehaviourReportsDroppedQueryStart(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := nettest.LinearTopology(2, clock.New())
+	_, nodes, err := linearTopology(2, clock.New())
 	require.NoError(t, err)
 
 	cfg := DefaultQueryConfig()
 	cfg.QueueCapacity = 1
 
-	b, err := NewQueryBehaviour[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, cfg)
+	b, err := NewQueryBehaviour[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, cfg)
 	require.NoError(t, err)
 
 	// take the queue's only place
 	b.Notify(ctx, &EventStopQuery{QueryID: "filler"})
 
-	waiter := NewQueryWaiter[kadt.Key, kadt.PeerID, *pb.Message](1)
-	b.Notify(ctx, &EventStartFindCloserQuery[kadt.Key, kadt.PeerID, *pb.Message]{
+	waiter := NewQueryWaiter[tiny.Key, tiny.Node, tiny.Message](1)
+	b.Notify(ctx, &EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: "dropped",
 		Target:  nodes[1].NodeID.Key(),
 		Notify:  waiter,
@@ -595,13 +592,13 @@ func TestQueryBehaviourReportsDroppedQueryStart(t *testing.T) {
 func TestQueryBehaviourBoundsItsInboundQueue(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := nettest.LinearTopology(2, clock.New())
+	_, nodes, err := linearTopology(2, clock.New())
 	require.NoError(t, err)
 
 	cfg := DefaultQueryConfig()
 	cfg.QueueCapacity = 4
 
-	b, err := NewQueryBehaviour[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, cfg)
+	b, err := NewQueryBehaviour[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, cfg)
 	require.NoError(t, err)
 
 	for i := range 20 {

@@ -5,45 +5,48 @@ import (
 	"fmt"
 
 	"github.com/benbjohnson/clock"
-	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/ipfs/go-libdht/kad"
 
+	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/routing"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
 )
 
-type Peer struct {
-	NodeID       kadt.PeerID
-	Router       *Router
-	RoutingTable routing.RoutingTableCpl[kadt.Key, kadt.PeerID]
+// A Peer is a participant in a [Topology], holding everything a coordinator needs to run on
+// top of the simulated network.
+type Peer[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
+	NodeID       N
+	Router       *Router[K, N, M]
+	RoutingTable routing.RoutingTableCpl[K, N]
 }
 
-type Topology struct {
+type Topology[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	clk       clock.Clock
+	proto     Protocol[K, N, M]
 	links     map[string]Link
-	nodes     []*Peer
-	nodeIndex map[string]*Peer
-	routers   map[string]*Router
+	nodes     []*Peer[K, N, M]
+	nodeIndex map[string]*Peer[K, N, M]
+	routers   map[string]*Router[K, N, M]
 }
 
-func NewTopology(clk clock.Clock) *Topology {
-	return &Topology{
+func NewTopology[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](clk clock.Clock, proto Protocol[K, N, M]) *Topology[K, N, M] {
+	return &Topology[K, N, M]{
 		clk:       clk,
+		proto:     proto,
 		links:     make(map[string]Link),
-		nodeIndex: make(map[string]*Peer),
-		routers:   make(map[string]*Router),
+		nodeIndex: make(map[string]*Peer[K, N, M]),
+		routers:   make(map[string]*Router[K, N, M]),
 	}
 }
 
-func (t *Topology) Peers() []*Peer {
+func (t *Topology[K, N, M]) Peers() []*Peer[K, N, M] {
 	return t.nodes
 }
 
-func (t *Topology) ConnectPeers(a *Peer, b *Peer) {
+func (t *Topology[K, N, M]) ConnectPeers(a *Peer[K, N, M], b *Peer[K, N, M]) {
 	t.ConnectPeersWithRoute(a, b, &DefaultLink{})
 }
 
-func (t *Topology) ConnectPeersWithRoute(a *Peer, b *Peer, l Link) {
+func (t *Topology[K, N, M]) ConnectPeersWithRoute(a *Peer[K, N, M], b *Peer[K, N, M], l Link) {
 	akey := a.NodeID.String()
 	if _, exists := t.nodeIndex[akey]; !exists {
 		t.nodeIndex[akey] = a
@@ -66,8 +69,8 @@ func (t *Topology) ConnectPeersWithRoute(a *Peer, b *Peer, l Link) {
 	t.links[btoa] = l
 }
 
-func (t *Topology) findRoute(ctx context.Context, from kadt.PeerID, to kadt.PeerID) (Link, error) {
-	key := fmt.Sprintf("%s->%s", peer.ID(from), peer.ID(to))
+func (t *Topology[K, N, M]) findRoute(from N, to N) (Link, error) {
+	key := fmt.Sprintf("%s->%s", from.String(), to.String())
 
 	route, ok := t.links[key]
 	if !ok {
@@ -77,8 +80,8 @@ func (t *Topology) findRoute(ctx context.Context, from kadt.PeerID, to kadt.Peer
 	return route, nil
 }
 
-func (t *Topology) Dial(ctx context.Context, from kadt.PeerID, to kadt.PeerID) error {
-	if from == to {
+func (t *Topology[K, N, M]) Dial(ctx context.Context, from N, to N) error {
+	if from.String() == to.String() {
 		_, ok := t.nodeIndex[to.String()]
 		if !ok {
 			return fmt.Errorf("unknown node")
@@ -87,7 +90,7 @@ func (t *Topology) Dial(ctx context.Context, from kadt.PeerID, to kadt.PeerID) e
 		return nil
 	}
 
-	route, err := t.findRoute(ctx, from, to)
+	route, err := t.findRoute(from, to)
 	if err != nil {
 		return fmt.Errorf("find route: %w", err)
 	}
@@ -109,19 +112,21 @@ func (t *Topology) Dial(ctx context.Context, from kadt.PeerID, to kadt.PeerID) e
 	return nil
 }
 
-func (t *Topology) RouteMessage(ctx context.Context, from kadt.PeerID, to kadt.PeerID, req *pb.Message) (*pb.Message, error) {
-	if from == to {
+func (t *Topology[K, N, M]) RouteMessage(ctx context.Context, from N, to N, req M) (M, error) {
+	var zero M
+
+	if from.String() == to.String() {
 		node, ok := t.nodeIndex[to.String()]
 		if !ok {
-			return nil, fmt.Errorf("unknown node")
+			return zero, fmt.Errorf("unknown node")
 		}
 
 		return node.Router.handleMessage(ctx, from, req)
 	}
 
-	route, err := t.findRoute(ctx, from, to)
+	route, err := t.findRoute(from, to)
 	if err != nil {
-		return nil, fmt.Errorf("find route: %w", err)
+		return zero, fmt.Errorf("find route: %w", err)
 	}
 
 	latency := route.ConnLatency()
@@ -131,7 +136,7 @@ func (t *Topology) RouteMessage(ctx context.Context, from kadt.PeerID, to kadt.P
 
 	node, ok := t.nodeIndex[to.String()]
 	if !ok {
-		return nil, fmt.Errorf("no route to node")
+		return zero, fmt.Errorf("no route to node")
 	}
 
 	return node.Router.handleMessage(ctx, from, req)

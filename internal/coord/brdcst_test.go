@@ -9,9 +9,7 @@ import (
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/kadtest"
-	"github.com/probe-lab/zikade/internal/nettest"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
+	"github.com/probe-lab/zikade/internal/tiny"
 )
 
 // TestBroadcastBehaviourContactsAllSeeds asserts that a static broadcast sends
@@ -25,18 +23,18 @@ import (
 func TestBroadcastBehaviourContactsAllSeeds(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := nettest.LinearTopology(6, clock.New())
+	_, nodes, err := linearTopology(6, clock.New())
 	require.NoError(t, err)
 
 	self := nodes[0].NodeID
 
-	pool, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, nil)
+	pool, err := brdcst.NewPool[tiny.Key, tiny.Node, tiny.Message](self, nil)
 	require.NoError(t, err)
 
-	b, err := NewPooledBroadcastBehaviour[kadt.Key, kadt.PeerID, *pb.Message](pool, nil)
+	b, err := NewPooledBroadcastBehaviour[tiny.Key, tiny.Node, tiny.Message](pool, nil)
 	require.NoError(t, err)
 
-	seeds := []kadt.PeerID{
+	seeds := []tiny.Node{
 		nodes[1].NodeID,
 		nodes[2].NodeID,
 		nodes[3].NodeID,
@@ -44,22 +42,22 @@ func TestBroadcastBehaviourContactsAllSeeds(t *testing.T) {
 		nodes[5].NodeID,
 	}
 
-	msg := &pb.Message{Type: pb.Message_PUT_VALUE}
+	msg := tiny.Message{Content: "store"}
 
-	b.Notify(ctx, &EventStartBroadcast[kadt.Key, kadt.PeerID, *pb.Message]{
+	b.Notify(ctx, &EventStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: "test",
 		Target:  msg.Target(),
 		Message: msg,
 		Seed:    seeds,
 		Config:  brdcst.DefaultConfigStatic(),
-		Notify:  NewBroadcastWaiter[kadt.Key, kadt.PeerID, *pb.Message](0),
+		Notify:  NewBroadcastWaiter[tiny.Key, tiny.Node, tiny.Message](0),
 	})
 
 	evs := PerformWhileReady(t, ctx, b)
 
-	var contacted []kadt.PeerID
+	var contacted []tiny.Node
 	for _, ev := range evs {
-		if oev, ok := ev.(*EventOutboundSendMessage[kadt.Key, kadt.PeerID, *pb.Message]); ok {
+		if oev, ok := ev.(*EventOutboundSendMessage[tiny.Key, tiny.Node, tiny.Message]); ok {
 			contacted = append(contacted, oev.To)
 		}
 	}
@@ -75,23 +73,23 @@ func TestBroadcastBehaviourContactsAllSeeds(t *testing.T) {
 func TestBroadcastBehaviourReportsDroppedBroadcastStart(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := nettest.LinearTopology(2, clock.New())
+	_, nodes, err := linearTopology(2, clock.New())
 	require.NoError(t, err)
 
-	pool, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, nil)
+	pool, err := brdcst.NewPool[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, nil)
 	require.NoError(t, err)
 
-	cfg := DefaultBroadcastConfig[kadt.Key, kadt.PeerID, *pb.Message]()
+	cfg := DefaultBroadcastConfig[tiny.Key, tiny.Node, tiny.Message]()
 	cfg.QueueCapacity = 1
 
-	b, err := NewPooledBroadcastBehaviour[kadt.Key, kadt.PeerID, *pb.Message](pool, cfg)
+	b, err := NewPooledBroadcastBehaviour[tiny.Key, tiny.Node, tiny.Message](pool, cfg)
 	require.NoError(t, err)
 
 	// take the queue's only place
 	b.Notify(ctx, &EventStopQuery{QueryID: "filler"})
 
-	waiter := NewBroadcastWaiter[kadt.Key, kadt.PeerID, *pb.Message](1)
-	b.Notify(ctx, &EventStartBroadcast[kadt.Key, kadt.PeerID, *pb.Message]{
+	waiter := NewBroadcastWaiter[tiny.Key, tiny.Node, tiny.Message](1)
+	b.Notify(ctx, &EventStartBroadcast[tiny.Key, tiny.Node, tiny.Message]{
 		QueryID: "dropped",
 		Target:  nodes[1].NodeID.Key(),
 		Notify:  waiter,

@@ -4,9 +4,10 @@ import (
 	"context"
 
 	"github.com/benbjohnson/clock"
+	"github.com/ipfs/go-libdht/kad"
 	"github.com/ipfs/go-libdht/kad/triert"
 
-	"github.com/probe-lab/zikade/kadt"
+	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
 // LinearTopology creates a network topology consisting of n nodes peered in a linear chain.
@@ -15,23 +16,23 @@ import (
 // The topology is not a ring: nodes[0] only has nodes[1] in its table and nodes[n-1] only has nodes[n-2] in its table.
 // nodes[1] has nodes[0] and nodes[2] in its routing table.
 // If n > 2 then the first and last nodes will not have one another in their routing tables.
-func LinearTopology(n int, clk clock.Clock) (*Topology, []*Peer, error) {
-	nodes := make([]*Peer, n)
+func LinearTopology[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](n int, clk clock.Clock, proto Protocol[K, N, M]) (*Topology[K, N, M], []*Peer[K, N, M], error) {
+	nodes := make([]*Peer[K, N, M], n)
 
-	top := NewTopology(clk)
+	top := NewTopology(clk, proto)
 	for i := range nodes {
 
-		id, err := NewPeerID()
+		id, err := proto.NewNodeID()
 		if err != nil {
 			return nil, nil, err
 		}
 
-		rt, err := triert.New[kadt.Key, kadt.PeerID](id, nil)
+		rt, err := triert.New[K, N](id, nil)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		nodes[i] = &Peer{
+		nodes[i] = &Peer[K, N, M]{
 			NodeID:       id,
 			Router:       NewRouter(id, top),
 			RoutingTable: rt,

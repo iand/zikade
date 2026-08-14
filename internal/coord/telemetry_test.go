@@ -12,11 +12,8 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
-	"github.com/probe-lab/zikade/internal/coord/cplutil"
 	"github.com/probe-lab/zikade/internal/kadtest"
-	"github.com/probe-lab/zikade/internal/nettest"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
+	"github.com/probe-lab/zikade/internal/tiny"
 )
 
 // collectSums reads every instrument the reader holds and returns the single data point of
@@ -77,19 +74,19 @@ func TestTelemetryRecordsEventLoopOccupancy(t *testing.T) {
 func TestCoordinatorReportsThroughInjectedProvider(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
-	_, nodes, err := nettest.LinearTopology(4, clock.New())
+	_, nodes, err := linearTopology(4, clock.New())
 	require.NoError(t, err)
 
 	reader := sdkmetric.NewManualReader()
 
-	ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
+	ccfg := DefaultCoordinatorConfig[tiny.Key, tiny.Node, tiny.Message]()
 	ccfg.MeterProvider = sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 
-	c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, cplutil.GenRandPeerID, ccfg)
+	c, err := NewCoordinator[tiny.Key, tiny.Node, tiny.Message](nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, tiny.NodeWithCpl, ccfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 
-	qfn := func(ctx context.Context, id kadt.PeerID, msg *pb.Message, stats coordt.QueryStats) error {
+	qfn := func(ctx context.Context, id tiny.Node, msg tiny.Message, stats coordt.QueryStats) error {
 		return nil
 	}
 

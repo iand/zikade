@@ -1,31 +1,28 @@
 package coord
 
-import (
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
-)
+import "github.com/probe-lab/zikade/internal/tiny"
 
-var _ NetworkCommand = (*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])(nil)
+var _ NetworkCommand = (*EventOutboundGetCloserNodes[tiny.Key, tiny.Node])(nil)
 
 var (
-	_ RoutingCommand = (*EventAddNode[kadt.Key, kadt.PeerID])(nil)
-	_ RoutingCommand = (*EventStartBootstrap[kadt.Key, kadt.PeerID])(nil)
+	_ RoutingCommand = (*EventAddNode[tiny.Key, tiny.Node])(nil)
+	_ RoutingCommand = (*EventStartBootstrap[tiny.Key, tiny.Node])(nil)
 )
 
 var (
-	_ QueryCommand = (*EventStartMessageQuery[kadt.Key, kadt.PeerID, *pb.Message])(nil)
-	_ QueryCommand = (*EventStartFindCloserQuery[kadt.Key, kadt.PeerID, *pb.Message])(nil)
+	_ QueryCommand = (*EventStartMessageQuery[tiny.Key, tiny.Node, tiny.Message])(nil)
+	_ QueryCommand = (*EventStartFindCloserQuery[tiny.Key, tiny.Node, tiny.Message])(nil)
 	_ QueryCommand = (*EventStopQuery)(nil)
 )
 
 var (
-	_ RoutingNotification = (*EventRoutingUpdated[kadt.Key, kadt.PeerID])(nil)
+	_ RoutingNotification = (*EventRoutingUpdated[tiny.Key, tiny.Node])(nil)
 	_ RoutingNotification = (*EventBootstrapFinished)(nil)
 )
 
-var _ NodeHandlerRequest = (*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])(nil)
+var _ NodeHandlerRequest = (*EventOutboundGetCloserNodes[tiny.Key, tiny.Node])(nil)
 
 var (
-	_ NodeHandlerResponse = (*EventGetCloserNodesSuccess[kadt.Key, kadt.PeerID])(nil)
-	_ NodeHandlerResponse = (*EventGetCloserNodesFailure[kadt.Key, kadt.PeerID])(nil)
+	_ NodeHandlerResponse = (*EventGetCloserNodesSuccess[tiny.Key, tiny.Node])(nil)
+	_ NodeHandlerResponse = (*EventGetCloserNodesFailure[tiny.Key, tiny.Node])(nil)
 )

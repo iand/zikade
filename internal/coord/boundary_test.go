@@ -48,11 +48,7 @@ var allowedModules = []string{
 // work, after which both the map and this comment should be deleted.
 var pendingImports = map[string][]string{
 	"internal/coord": {
-		"github.com/libp2p/go-libp2p/core/peer",
 		"github.com/probe-lab/zikade/errs",
-		"github.com/probe-lab/zikade/internal/coord/cplutil",
-		"github.com/probe-lab/zikade/kadt",
-		"github.com/probe-lab/zikade/pb",
 		"github.com/stretchr/testify/require",
 		"github.com/stretchr/testify/suite",
 	},
@@ -68,12 +64,6 @@ var pendingImports = map[string][]string{
 	"internal/coord/brdcst": {
 		"github.com/stretchr/testify/assert",
 		"github.com/stretchr/testify/require",
-	},
-	"internal/nettest": {
-		"github.com/libp2p/go-libp2p/core/crypto",
-		"github.com/libp2p/go-libp2p/core/peer",
-		"github.com/probe-lab/zikade/kadt",
-		"github.com/probe-lab/zikade/pb",
 	},
 	"internal/kadtest": {
 		"github.com/stretchr/testify/assert",
