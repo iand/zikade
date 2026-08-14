@@ -319,7 +319,7 @@ func (c *Coordinator) GetClosestNodes(ctx context.Context, k kadt.Key, n int) ([
 // numResults specifies the minimum number of nodes to successfully contact before considering iteration complete.
 // The query is considered to be exhausted when it has received responses from at least this number of nodes
 // and there are no closer nodes remaining to be contacted. A default of 20 is used if this value is less than 1.
-func (c *Coordinator) QueryClosest(ctx context.Context, target kadt.Key, fn coordt.QueryFunc, numResults int) ([]kadt.PeerID, coordt.QueryStats, error) {
+func (c *Coordinator) QueryClosest(ctx context.Context, target kadt.Key, fn coordt.QueryFunc[kadt.Key, kadt.PeerID, *pb.Message], numResults int) ([]kadt.PeerID, coordt.QueryStats, error) {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.Query")
 	defer span.End()
 	c.cfg.Logger.Debug("starting query for closest nodes", tele.LogAttrKey(target))
@@ -360,7 +360,7 @@ func (c *Coordinator) QueryClosest(ctx context.Context, target kadt.Key, fn coor
 // numResults specifies the minimum number of nodes to successfully contact before considering iteration complete.
 // The query is considered to be exhausted when it has received responses from at least this number of nodes
 // and there are no closer nodes remaining to be contacted. A default of 20 is used if this value is less than 1.
-func (c *Coordinator) QueryMessage(ctx context.Context, msg *pb.Message, fn coordt.QueryFunc, numResults int) ([]kadt.PeerID, coordt.QueryStats, error) {
+func (c *Coordinator) QueryMessage(ctx context.Context, msg *pb.Message, fn coordt.QueryFunc[kadt.Key, kadt.PeerID, *pb.Message], numResults int) ([]kadt.PeerID, coordt.QueryStats, error) {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.QueryMessage")
 	defer span.End()
 	if msg == nil {
@@ -459,7 +459,7 @@ func (c *Coordinator) broadcast(ctx context.Context, msg *pb.Message, seeds []ka
 	return nil
 }
 
-func (c *Coordinator) waitForQuery(ctx context.Context, queryID coordt.QueryID, waiter *QueryWaiter, fn coordt.QueryFunc) ([]kadt.PeerID, coordt.QueryStats, error) {
+func (c *Coordinator) waitForQuery(ctx context.Context, queryID coordt.QueryID, waiter *QueryWaiter, fn coordt.QueryFunc[kadt.Key, kadt.PeerID, *pb.Message]) ([]kadt.PeerID, coordt.QueryStats, error) {
 	var lastStats coordt.QueryStats
 
 	// progressed is set to nil once the notifier closes the progress channel, which it

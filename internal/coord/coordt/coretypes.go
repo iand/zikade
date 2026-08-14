@@ -6,9 +6,6 @@ import (
 	"time"
 
 	"github.com/ipfs/go-libdht/kad"
-
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
 )
 
 // TODO: rename to something like OperationID. This type isn't only used to identify queries but also other operations like broadcasts.
@@ -21,12 +18,6 @@ const InvalidQueryID QueryID = ""
 // has no clock of its own.
 type StateMachine[E any, S any] interface {
 	Advance(ctx context.Context, now time.Time, ev E) S
-}
-
-// Value is a value that may be stored in the DHT.
-type Value interface {
-	Key() kadt.Key
-	MarshalBinary() ([]byte, error)
 }
 
 var (
@@ -47,7 +38,9 @@ var (
 // Query stops entirely and returns that error.
 //
 // The stats argument contains statistics on the progress of the query so far.
-type QueryFunc func(ctx context.Context, id kadt.PeerID, resp *pb.Message, stats QueryStats) error
+//
+// K is the key type, N the node type and M the message type the query operates on.
+type QueryFunc[K kad.Key[K], N kad.NodeID[K], M Message] func(ctx context.Context, id N, resp M, stats QueryStats) error
 
 type QueryStats struct {
 	Start     time.Time // Start is the time the query began executing.

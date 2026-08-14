@@ -58,10 +58,6 @@ var pendingImports = map[string][]string{
 		"github.com/stretchr/testify/require",
 		"github.com/stretchr/testify/suite",
 	},
-	"internal/coord/coordt": {
-		"github.com/probe-lab/zikade/kadt",
-		"github.com/probe-lab/zikade/pb",
-	},
 	"internal/coord/query": {
 		"github.com/probe-lab/zikade/errs",
 		"github.com/stretchr/testify/require",
