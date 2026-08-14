@@ -9,6 +9,7 @@ import (
 
 	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/require"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/kadtest"
@@ -77,13 +78,6 @@ func (r *promptRouter) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.
 
 func (r *promptRouter) GetClosestNodes(ctx context.Context, to kadt.PeerID, target kadt.Key) ([]kadt.PeerID, error) {
 	return nil, nil
-}
-
-// handlerCount returns the number of node handlers the behaviour is holding.
-func (b *NetworkBehaviour) handlerCount() int {
-	b.nodeHandlersMu.Lock()
-	defer b.nodeHandlersMu.Unlock()
-	return len(b.nodeHandlers)
 }
 
 // handlerFor returns the node handler the behaviour holds for a peer, or nil if it holds none.
@@ -235,4 +229,43 @@ func TestEvictIdleRefusesBusyHandler(t *testing.T) {
 		require.True(t, b.evictIdle(nh), "a handler with nothing outstanding was not evicted")
 		require.Zero(t, b.handlerCount())
 	})
+}
+
+// TestNetworkBehaviourReportsInFlightRequests checks that the number of requests the
+// behaviour is carrying and the number of node handlers it holds are reported through the
+// meter it was given.
+func TestNetworkBehaviourReportsInFlightRequests(t *testing.T) {
+	ctx := kadtest.CtxShort(t)
+
+	_, nodes, err := nettest.LinearTopology(3, clock.New())
+	require.NoError(t, err)
+
+	reader := sdkmetric.NewManualReader()
+
+	cfg := DefaultNetworkConfig()
+	cfg.Meter = sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test")
+
+	// the router never answers, so every request stays in flight for the whole test
+	rtr := &blockingRouter{release: make(chan struct{})}
+	b, err := NewNetworkBehaviour(rtr, cfg)
+	require.NoError(t, err)
+	t.Cleanup(b.Close)
+
+	notify := NotifyFunc[BehaviourEvent](func(ctx context.Context, ev BehaviourEvent) {})
+
+	peers := nodes[1:]
+	for _, n := range peers {
+		b.Notify(ctx, &EventOutboundGetCloserNodes{
+			QueryID: "test",
+			To:      n.NodeID,
+			Target:  n.NodeID.Key(),
+			Notify:  notify,
+		})
+	}
+
+	sums := collectSums(t, reader)
+	require.Equal(t, float64(len(peers)), sums["network_requests_in_flight"])
+	require.Equal(t, float64(len(peers)), sums["network_node_handlers"])
+
+	close(rtr.release)
 }

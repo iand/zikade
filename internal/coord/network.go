@@ -111,7 +111,7 @@ type NetworkBehaviour struct {
 	rtr coordt.Router[kadt.Key, kadt.PeerID, *pb.Message]
 
 	nodeHandlersMu sync.Mutex
-	nodeHandlers   map[kadt.PeerID]*NodeHandler // TODO: garbage collect node handlers
+	nodeHandlers   map[kadt.PeerID]*NodeHandler
 
 	// slots limits the number of requests queued or in flight across all node handlers
 	slots *slots
@@ -119,6 +119,12 @@ type NetworkBehaviour struct {
 	// counterRequestsDropped tracks the number of requests dropped due to no available
 	// capacity.
 	counterRequestsDropped metric.Int64Counter
+
+	// gaugeRequestsInFlight tracks the number of requests accepted but not yet completed.
+	gaugeRequestsInFlight metric.Int64ObservableGauge
+
+	// gaugeNodeHandlers tracks the number of node handlers the behaviour is holding.
+	gaugeNodeHandlers metric.Int64ObservableGauge
 
 	pendingMu sync.Mutex
 	pending   []BehaviourEvent
@@ -154,6 +160,30 @@ func NewNetworkBehaviour(rtr coordt.Router[kadt.Key, kadt.PeerID, *pb.Message], 
 		return nil, fmt.Errorf("create network_requests_dropped counter: %w", err)
 	}
 
+	b.gaugeRequestsInFlight, err = cfg.Meter.Int64ObservableGauge(
+		"network_requests_in_flight",
+		metric.WithDescription("Number of requests accepted by a node handler but not yet completed"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			o.Observe(int64(b.slots.held()))
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create network_requests_in_flight gauge: %w", err)
+	}
+
+	b.gaugeNodeHandlers, err = cfg.Meter.Int64ObservableGauge(
+		"network_node_handlers",
+		metric.WithDescription("Number of node handlers the network behaviour is holding"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			o.Observe(int64(b.handlerCount()))
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create network_node_handlers gauge: %w", err)
+	}
+
 	return b, nil
 }
 
@@ -183,6 +213,19 @@ func (s *slots) release() {
 	case <-s.tokens:
 	default:
 	}
+}
+
+// held returns the number of slots currently taken.
+func (s *slots) held() int {
+	return len(s.tokens)
+}
+
+// handlerCount returns the number of node handlers the behaviour is holding.
+func (b *NetworkBehaviour) handlerCount() int {
+	b.nodeHandlersMu.Lock()
+	defer b.nodeHandlersMu.Unlock()
+
+	return len(b.nodeHandlers)
 }
 
 // Notify hands a request to the node handler for the peer it is addressed to. It does not

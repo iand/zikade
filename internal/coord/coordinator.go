@@ -196,6 +196,19 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 		return nil, err
 	}
 
+	// Each behaviour traces and records metrics through the coordinator's providers. The
+	// configuration is copied first, leaving the caller's struct unchanged.
+	ccfg := *cfg
+	cfg = &ccfg
+
+	behaviourTracer := cfg.TracerProvider.Tracer(tele.TracerName)
+	behaviourMeter := cfg.MeterProvider.Meter(tele.MeterName)
+
+	cfg.Query.Tracer, cfg.Query.Meter = behaviourTracer, behaviourMeter
+	cfg.Routing.Tracer, cfg.Routing.Meter = behaviourTracer, behaviourMeter
+	cfg.Brdcst.Tracer, cfg.Brdcst.Meter = behaviourTracer, behaviourMeter
+	cfg.Network.Tracer, cfg.Network.Meter = behaviourTracer, behaviourMeter
+
 	// initialize a new telemetry struct
 	tele, err := NewTelemetry(cfg.MeterProvider, cfg.TracerProvider)
 	if err != nil {
@@ -276,26 +289,32 @@ func (c *Coordinator) eventLoop(ctx context.Context) {
 	defer span.End()
 
 	for {
-		var ev BehaviourEvent
-		var ok bool
+		// The select is the loop's only idle point, so the work of a pass is everything
+		// after it. Choosing the behaviour here rather than performing it in the case
+		// keeps that boundary in one place.
+		var perform func(context.Context) (BehaviourEvent, bool)
 
 		select {
 		case <-ctx.Done():
 			// coordinator is closing
 			return
 		case <-c.networkBehaviour.Ready():
-			ev, ok = c.networkBehaviour.Perform(ctx)
+			perform = c.networkBehaviour.Perform
 		case <-c.routingBehaviour.Ready():
-			ev, ok = c.routingBehaviour.Perform(ctx)
+			perform = c.routingBehaviour.Perform
 		case <-c.queryBehaviour.Ready():
-			ev, ok = c.queryBehaviour.Perform(ctx)
+			perform = c.queryBehaviour.Perform
 		case <-c.brdcstBehaviour.Ready():
-			ev, ok = c.brdcstBehaviour.Perform(ctx)
+			perform = c.brdcstBehaviour.Perform
 		}
 
-		if ok {
+		start := c.cfg.Clock.Now()
+
+		if ev, ok := perform(ctx); ok {
 			c.dispatchEvent(ctx, ev)
 		}
+
+		c.tele.RecordEventLoopPass(ctx, c.cfg.Clock.Since(start))
 	}
 }
 
