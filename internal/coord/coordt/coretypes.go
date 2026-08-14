@@ -40,7 +40,7 @@ var (
 // The stats argument contains statistics on the progress of the query so far.
 //
 // K is the key type, N the node type and M the message type the query operates on.
-type QueryFunc[K kad.Key[K], N kad.NodeID[K], M Message] func(ctx context.Context, id N, resp M, stats QueryStats) error
+type QueryFunc[K kad.Key[K], N kad.NodeID[K], M Message[K, N]] func(ctx context.Context, id N, resp M, stats QueryStats) error
 
 type QueryStats struct {
 	Start     time.Time // Start is the time the query began executing.
@@ -59,9 +59,28 @@ var (
 	ErrSkipRemaining = errors.New("skip remaining nodes")
 )
 
-type Message any
+// Message is the contract a protocol message must satisfy for the core to route a query
+// with it.
+type Message[K kad.Key[K], N kad.NodeID[K]] interface {
+	// Target returns the key the message is directed at.
+	Target() K
 
-type Router[K kad.Key[K], N kad.NodeID[K], M Message] interface {
+	// CloserNodes returns the nodes that the sender considers closest to the target.
+	CloserNodes() []N
+}
+
+// NoMessage satisfies [Message] for queries that only ask for closer nodes and never send
+// one.
+type NoMessage[K kad.Key[K], N kad.NodeID[K]] struct{}
+
+func (NoMessage[K, N]) Target() K {
+	var zero K
+	return zero
+}
+
+func (NoMessage[K, N]) CloserNodes() []N { return nil }
+
+type Router[K kad.Key[K], N kad.NodeID[K], M Message[K, N]] interface {
 	// SendMessage attempts to send a request to another node. This method blocks until a response is received or an error is encountered.
 	SendMessage(ctx context.Context, to N, req M) (M, error)
 

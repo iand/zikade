@@ -29,7 +29,7 @@ type StateBroadcastFindCloser[K kad.Key[K], N kad.NodeID[K]] struct {
 // StateBroadcastStoreRecord indicates to the broadcast [Pool] or any other
 // upper layer that a [Broadcast] state machine wants to store a record using
 // the given Message with the given NodeID.
-type StateBroadcastStoreRecord[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type StateBroadcastStoreRecord[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID coordt.QueryID // the id of the broadcast operation that wants to send the message
 	NodeID  N              // the node to send the message to
 	Message M              // the message the broadcast behaviour wants to send
@@ -120,7 +120,7 @@ type EventBroadcastNodeFailure[K kad.Key[K], N kad.NodeID[K]] struct {
 // a confirmation, so Response will always be nil. Check out
 // [pb.Message.ExpectResponse] for information about which requests should
 // receive a response.
-type EventBroadcastStoreRecordSuccess[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type EventBroadcastStoreRecordSuccess[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	NodeID   N // the node the message was sent to
 	Request  M // the message that was sent to the remote node
 	Response M // the reply we got from the remote node (nil in many cases of the Amino DHT)
@@ -129,7 +129,7 @@ type EventBroadcastStoreRecordSuccess[K kad.Key[K], N kad.NodeID[K], M coordt.Me
 // EventBroadcastStoreRecordFailure notifies a broadcast [Broadcast] state
 // machine that storing a record with a remote node (NodeID) has failed. The
 // message that was sent is held in Request, and the error will be in Error.
-type EventBroadcastStoreRecordFailure[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type EventBroadcastStoreRecordFailure[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	NodeID  N     // the node the message was sent to
 	Request M     // the message that was sent to the remote node
 	Error   error // the error that caused the failure, if any

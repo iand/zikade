@@ -79,7 +79,7 @@ func DefaultQueryConfig() *QueryConfig {
 	}
 }
 
-type Query[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type Query[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	self N
 	id   coordt.QueryID
 
@@ -116,7 +116,7 @@ type Query[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
 	inFlight int
 }
 
-func NewFindCloserQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, id coordt.QueryID, target K, iter NodeIter[K, N], knownClosestNodes []N, cfg *QueryConfig) (*Query[K, N, M], error) {
+func NewFindCloserQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](self N, id coordt.QueryID, target K, iter NodeIter[K, N], knownClosestNodes []N, cfg *QueryConfig) (*Query[K, N, M], error) {
 	var empty M
 	q, err := NewQuery[K, N, M](self, id, target, empty, iter, knownClosestNodes, cfg)
 	if err != nil {
@@ -126,7 +126,7 @@ func NewFindCloserQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N,
 	return q, nil
 }
 
-func NewQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, id coordt.QueryID, target K, msg M, iter NodeIter[K, N], knownClosestNodes []N, cfg *QueryConfig) (*Query[K, N, M], error) {
+func NewQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](self N, id coordt.QueryID, target K, msg M, iter NodeIter[K, N], knownClosestNodes []N, cfg *QueryConfig) (*Query[K, N, M], error) {
 	if cfg == nil {
 		cfg = DefaultQueryConfig()
 	} else if err := cfg.Validate(); err != nil {
@@ -446,7 +446,7 @@ type StateQueryFindCloser[K kad.Key[K], N kad.NodeID[K]] struct {
 }
 
 // StateQuerySendMessage indicates that the [Query] wants to send a message to a node.
-type StateQuerySendMessage[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type StateQuerySendMessage[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID coordt.QueryID
 	NodeID  N // the node to send the message to
 	Message M

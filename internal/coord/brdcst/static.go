@@ -15,7 +15,7 @@ import (
 // Static is a [Broadcast] state machine and encapsulates the logic around
 // doing a put operation to a static set of nodes. That static set of nodes
 // is given by the list of seed nodes in the [EventBroadcastStart] event.
-type Static[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type Static[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	// the unique ID for this broadcast operation
 	queryID coordt.QueryID
 
@@ -48,7 +48,7 @@ type Static[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
 }
 
 // NewStatic initializes a new [Static] struct.
-func NewStatic[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.QueryID, msg M, cfg *ConfigStatic, tracer trace.Tracer) *Static[K, N, M] {
+func NewStatic[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](qid coordt.QueryID, msg M, cfg *ConfigStatic, tracer trace.Tracer) *Static[K, N, M] {
 	return &Static[K, N, M]{
 		queryID: qid,
 		cfg:     cfg,

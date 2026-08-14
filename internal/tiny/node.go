@@ -15,8 +15,23 @@ type Node struct {
 	key Key
 }
 
+// Message is a message suitable for tiny test networks.
 type Message struct {
 	Content string
+
+	// TargetKey is the key the message is directed at.
+	TargetKey Key
+
+	// Closer holds the nodes the sender considers closest to the target.
+	Closer []Node
+}
+
+func (m Message) Target() Key {
+	return m.TargetKey
+}
+
+func (m Message) CloserNodes() []Node {
+	return m.Closer
 }
 
 var _ kad.NodeID[Key] = Node{}

@@ -17,7 +17,7 @@ import (
 // original go-libp2p-kad-dht v1 code base. It first queries the closest nodes
 // to a certain target key, and after they were discovered, it "follows up" with
 // storing the record with these closest nodes.
-type FollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type FollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	// the unique ID for this broadcast operation
 	queryID coordt.QueryID
 
@@ -61,7 +61,7 @@ type FollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
 }
 
 // NewFollowUp initializes a new [FollowUp] struct.
-func NewFollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message](qid coordt.QueryID, pool *query.Pool[K, N, M], msg M, cfg *ConfigFollowUp, tracer trace.Tracer) *FollowUp[K, N, M] {
+func NewFollowUp[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](qid coordt.QueryID, pool *query.Pool[K, N, M], msg M, cfg *ConfigFollowUp, tracer trace.Tracer) *FollowUp[K, N, M] {
 	return &FollowUp[K, N, M]{
 		queryID: qid,
 		cfg:     cfg,

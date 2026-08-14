@@ -43,7 +43,7 @@ type Bootstrap[K kad.Key[K], N kad.NodeID[K]] struct {
 	seeds []N
 
 	// qry is the query used by the bootstrap process
-	qry *query.Query[K, N, any]
+	qry *query.Query[K, N, coordt.NoMessage[K, N]]
 
 	// lastAttempt is the time the most recent bootstrap was started, or the zero time if
 	// none has been
@@ -320,7 +320,7 @@ func (b *Bootstrap[K, N]) startQuery(ctx context.Context, now time.Time, seeds [
 	qryCfg.RequestTimeout = b.cfg.RequestTimeout
 	qryCfg.Timeout = b.cfg.Timeout
 
-	qry, err := query.NewFindCloserQuery[K, N, any](b.self, BootstrapQueryID, b.self.Key(), iter, seeds, qryCfg)
+	qry, err := query.NewFindCloserQuery[K, N, coordt.NoMessage[K, N]](b.self, BootstrapQueryID, b.self.Key(), iter, seeds, qryCfg)
 	if err != nil {
 		// TODO: don't panic
 		panic(err)

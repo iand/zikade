@@ -42,7 +42,7 @@ type Explore[K kad.Key[K], N kad.NodeID[K]] struct {
 	cplFn NodeIDForCplFunc[K, N]
 
 	// qry is the query used by the explore process
-	qry *query.Query[K, N, any]
+	qry *query.Query[K, N, coordt.NoMessage[K, N]]
 
 	// qryCpl is the cpl the current query is exploring for
 	qryCpl int
@@ -275,7 +275,7 @@ func (e *Explore[K, N]) Advance(ctx context.Context, now time.Time, ev ExploreEv
 	qryCfg.RequestTimeout = e.cfg.RequestTimeout
 	qryCfg.Timeout = e.cfg.Timeout
 
-	qry, err := query.NewFindCloserQuery[K, N, any](e.self, ExploreQueryID, node.Key(), iter, seeds, qryCfg)
+	qry, err := query.NewFindCloserQuery[K, N, coordt.NoMessage[K, N]](e.self, ExploreQueryID, node.Key(), iter, seeds, qryCfg)
 	if err != nil {
 		return &StateExploreFailure{
 			Cpl:   cpl,

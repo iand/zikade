@@ -33,7 +33,7 @@ type Broadcast = coordt.StateMachine[BroadcastEvent, BroadcastState]
 // broadcast [Pool] would keep track of all running broadcasts.
 //
 // [Reprovide Sweep]: https://www.notion.so/pl-strflt/DHT-Reprovide-Sweep-3108adf04e9d4086bafb727b17ae033d?pvs=4
-type Pool[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type Pool[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	qp  *query.Pool[K, N, M]         // the query pool of "get closer peers" queries
 	bcs map[coordt.QueryID]Broadcast // all currently running broadcast operations
 	cfg ConfigPool                   // cfg is a copy of the optional configuration supplied to the Pool
@@ -49,7 +49,7 @@ type Pool[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
 //  2. the query pool logic will stay simpler
 //  3. we don't need to cross communicated from the broadcast to the query pool
 //     4.
-func NewPool[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, cfg *ConfigPool) (*Pool[K, N, M], error) {
+func NewPool[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](self N, cfg *ConfigPool) (*Pool[K, N, M], error) {
 	if cfg == nil {
 		cfg = DefaultConfigPool()
 	} else if err := cfg.Validate(); err != nil {
@@ -238,7 +238,7 @@ type StatePoolWaiting struct {
 // wants to store a record using the given Message with the given NodeID. The
 // network behaviour should take over and notify the [coord.PooledBroadcastBehaviour]
 // about updates.
-type StatePoolStoreRecord[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type StatePoolStoreRecord[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID coordt.QueryID // the id of the broadcast operation that wants to send the message
 	NodeID  N              // the node to send the message to
 	Message M              // the message that should be sent to the remote node
@@ -287,7 +287,7 @@ type EventPoolPoll struct{}
 
 // EventPoolStartBroadcast is an event that attempts to start a new broadcast
 // operation. This is the entry point.
-type EventPoolStartBroadcast[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type EventPoolStartBroadcast[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID coordt.QueryID // the unique ID for this operation
 	Target  K              // the key we want to store the record for
 	Message M              // the message that we want to send to the closest peers (this encapsulates the payload we want to store)
@@ -327,7 +327,7 @@ type EventPoolGetCloserNodesFailure[K kad.Key[K], N kad.NodeID[K]] struct {
 // case of the Amino DHT, nodes do not respond with a confirmation, so Response
 // will always be nil. Check out [pb.Message.ExpectResponse] for information
 // about which requests should receive a response.
-type EventPoolStoreRecordSuccess[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type EventPoolStoreRecordSuccess[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID  coordt.QueryID // the id of the query that sent the message
 	NodeID   N              // the node the message was sent to
 	Request  M              // the message that was sent to the remote node
@@ -337,7 +337,7 @@ type EventPoolStoreRecordSuccess[K kad.Key[K], N kad.NodeID[K], M coordt.Message
 // EventPoolStoreRecordFailure noties the broadcast [Pool] that storing a record
 // with a remote node (NodeID) has failed. The message that was sent is hold
 // in Request, and the error will be in Error.
-type EventPoolStoreRecordFailure[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type EventPoolStoreRecordFailure[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID coordt.QueryID // the id of the query that sent the message
 	NodeID  N              // the node the message was sent to
 	Request M              // the message that was sent to the remote node

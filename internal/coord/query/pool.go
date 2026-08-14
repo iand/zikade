@@ -12,7 +12,7 @@ import (
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
-type Pool[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type Pool[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	// self is the node id of the system the pool is running on
 	self       N
 	queries    []*Query[K, N, M]
@@ -95,7 +95,7 @@ func DefaultPoolConfig() *PoolConfig {
 	}
 }
 
-func NewPool[K kad.Key[K], N kad.NodeID[K], M coordt.Message](self N, cfg *PoolConfig) (*Pool[K, N, M], error) {
+func NewPool[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](self N, cfg *PoolConfig) (*Pool[K, N, M], error) {
 	if cfg == nil {
 		cfg = DefaultPoolConfig()
 	} else if err := cfg.Validate(); err != nil {
@@ -355,7 +355,7 @@ type StatePoolFindCloser[K kad.Key[K], N kad.NodeID[K]] struct {
 }
 
 // StatePoolSendMessage indicates that a pool query wants to send a message to a node.
-type StatePoolSendMessage[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type StatePoolSendMessage[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID coordt.QueryID
 	NodeID  N // the node to send the message to
 	Message M
@@ -410,7 +410,7 @@ type EventPoolAddFindCloserQuery[K kad.Key[K], N kad.NodeID[K]] struct {
 }
 
 // EventPoolAddQuery is an event that attempts to add a new query that sends a message.
-type EventPoolAddQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message] struct {
+type EventPoolAddQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID    coordt.QueryID // the id to use for the new query
 	Target     K              // the target key for the query
 	Message    M              // message to be sent to each node
