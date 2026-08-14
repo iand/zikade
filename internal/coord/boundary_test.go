@@ -48,13 +48,11 @@ var allowedModules = []string{
 // work, after which both the map and this comment should be deleted.
 var pendingImports = map[string][]string{
 	"internal/coord": {
-		"github.com/libp2p/go-libp2p-record/pb",
 		"github.com/libp2p/go-libp2p/core/peer",
 		"github.com/probe-lab/zikade/errs",
 		"github.com/probe-lab/zikade/internal/coord/cplutil",
 		"github.com/probe-lab/zikade/kadt",
 		"github.com/probe-lab/zikade/pb",
-		"github.com/probe-lab/zikade/tele",
 		"github.com/stretchr/testify/require",
 		"github.com/stretchr/testify/suite",
 	},

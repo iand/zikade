@@ -1,7 +1,6 @@
 package coord
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -12,15 +11,14 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/ipfs/go-libdht/kad"
+
 	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
-	"github.com/probe-lab/zikade/tele"
 )
 
-type BroadcastConfig struct {
+type BroadcastConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	// Clock is a clock that may replaced by a mock when testing
 	Clock clock.Clock
 
@@ -38,10 +36,15 @@ type BroadcastConfig struct {
 	// than [NetworkConfig.Capacity], since a node handler queues a response here before
 	// releasing the capacity it held, so that many responses can be waiting at once.
 	QueueCapacity int
+
+	// VerifyResponse reports whether a node's reply to a stored record shows that it stored
+	// the record, returning a nil error when it did. A nil VerifyResponse takes every reply
+	// that is not itself an error as a success.
+	VerifyResponse func(req, resp M) error
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
-func (cfg *BroadcastConfig) Validate() error {
+func (cfg *BroadcastConfig[K, N, M]) Validate() error {
 	if cfg.Clock == nil {
 		return &errs.ConfigurationError{
 			Component: "BroadcastConfig",
@@ -80,22 +83,25 @@ func (cfg *BroadcastConfig) Validate() error {
 	return nil
 }
 
-func DefaultBroadcastConfig() *BroadcastConfig {
-	return &BroadcastConfig{
+func DefaultBroadcastConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]]() *BroadcastConfig[K, N, M] {
+	return &BroadcastConfig[K, N, M]{
 		Clock:         clock.New(),
-		Logger:        tele.DefaultLogger("coord"),
-		Tracer:        tele.NoopTracer(),
-		Meter:         tele.NoopMeter(),
+		Logger:        slog.Default(),
+		Tracer:        coordt.NoopTracer(),
+		Meter:         coordt.NoopMeter(),
 		QueueCapacity: 1024, // MAGIC
 	}
 }
 
-type PooledBroadcastBehaviour struct {
+type PooledBroadcastBehaviour[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	logger *slog.Logger
 	tracer trace.Tracer
 
 	// clk supplies the instant each advance of the pool is applied at.
 	clk clock.Clock
+
+	// verifyResponse reports whether a reply shows that a record was stored.
+	verifyResponse func(req, resp M) error
 
 	// performMu is held while Perform is executing to ensure sequential execution of work.
 	performMu sync.Mutex
@@ -110,7 +116,7 @@ type PooledBroadcastBehaviour struct {
 
 	// notifiers is a map that keeps track of event notifications for each running broadcast.
 	// it must only be accessed while performMu is held
-	notifiers map[coordt.QueryID]*queryNotifier[*EventBroadcastFinished]
+	notifiers map[coordt.QueryID]*queryNotifier[K, N, M, *EventBroadcastFinished[K, N]]
 
 	// inbound is a bounded queue of inbound events that are awaiting processing
 	inbound *inboundQueue
@@ -137,23 +143,27 @@ type PooledBroadcastBehaviour struct {
 	readyTimer *readyTimer
 }
 
-var _ Behaviour[BehaviourEvent, BehaviourEvent] = (*PooledBroadcastBehaviour)(nil)
-
-func NewPooledBroadcastBehaviour(brdcstPool *brdcst.Pool[kadt.Key, kadt.PeerID, *pb.Message], cfg *BroadcastConfig) (*PooledBroadcastBehaviour, error) {
+func NewPooledBroadcastBehaviour[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](brdcstPool *brdcst.Pool[K, N, M], cfg *BroadcastConfig[K, N, M]) (*PooledBroadcastBehaviour[K, N, M], error) {
 	if cfg == nil {
-		cfg = DefaultBroadcastConfig()
+		cfg = DefaultBroadcastConfig[K, N, M]()
 	} else if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
-	b := &PooledBroadcastBehaviour{
+	b := &PooledBroadcastBehaviour[K, N, M]{
 		pool:      brdcstPool,
 		clk:       cfg.Clock,
-		notifiers: make(map[coordt.QueryID]*queryNotifier[*EventBroadcastFinished]),
+		notifiers: make(map[coordt.QueryID]*queryNotifier[K, N, M, *EventBroadcastFinished[K, N]]),
 		inbound:   newInboundQueue(cfg.QueueCapacity),
 		ready:     make(chan struct{}, 1),
 		logger:    cfg.Logger.With("behaviour", "pooledBroadcast"),
 		tracer:    cfg.Tracer,
+
+		verifyResponse: cfg.VerifyResponse,
+	}
+
+	if b.verifyResponse == nil {
+		b.verifyResponse = func(req, resp M) error { return nil }
 	}
 
 	var err error
@@ -183,11 +193,11 @@ func NewPooledBroadcastBehaviour(brdcstPool *brdcst.Pool[kadt.Key, kadt.PeerID, 
 	return b, nil
 }
 
-func (b *PooledBroadcastBehaviour) Ready() <-chan struct{} {
+func (b *PooledBroadcastBehaviour[K, N, M]) Ready() <-chan struct{} {
 	return b.ready
 }
 
-func (b *PooledBroadcastBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
+func (b *PooledBroadcastBehaviour[K, N, M]) Notify(ctx context.Context, ev BehaviourEvent) {
 	ctx, span := b.tracer.Start(ctx, "PooledBroadcastBehaviour.Notify")
 	defer span.End()
 
@@ -207,17 +217,17 @@ func (b *PooledBroadcastBehaviour) Notify(ctx context.Context, ev BehaviourEvent
 // reportDropped tells the caller of a dropped operation that it will not be carried out. An
 // event that starts a broadcast leaves a caller waiting on its monitor for a terminal event
 // that would otherwise never arrive.
-func (b *PooledBroadcastBehaviour) reportDropped(ctx context.Context, ev BehaviourEvent) {
-	sev, ok := ev.(*EventStartBroadcast)
+func (b *PooledBroadcastBehaviour[K, N, M]) reportDropped(ctx context.Context, ev BehaviourEvent) {
+	sev, ok := ev.(*EventStartBroadcast[K, N, M])
 	if !ok || sev.Notify == nil {
 		return
 	}
 
-	n := &queryNotifier[*EventBroadcastFinished]{monitor: sev.Notify}
-	n.NotifyFinished(ctx, &EventBroadcastFinished{QueryID: sev.QueryID, Err: ErrEventDropped})
+	n := &queryNotifier[K, N, M, *EventBroadcastFinished[K, N]]{monitor: sev.Notify}
+	n.NotifyFinished(ctx, &EventBroadcastFinished[K, N]{QueryID: sev.QueryID, Err: ErrEventDropped})
 }
 
-func (b *PooledBroadcastBehaviour) Perform(ctx context.Context) (out BehaviourEvent, performed bool) {
+func (b *PooledBroadcastBehaviour[K, N, M]) Perform(ctx context.Context) (out BehaviourEvent, performed bool) {
 	b.performMu.Lock()
 	defer b.performMu.Unlock()
 
@@ -253,7 +263,7 @@ func (b *PooledBroadcastBehaviour) Perform(ctx context.Context) (out BehaviourEv
 	return b.nextPendingOutbound()
 }
 
-func (b *PooledBroadcastBehaviour) nextPendingOutbound() (BehaviourEvent, bool) {
+func (b *PooledBroadcastBehaviour[K, N, M]) nextPendingOutbound() (BehaviourEvent, bool) {
 	if len(b.pendingOutbound) == 0 {
 		return nil, false
 	}
@@ -262,7 +272,7 @@ func (b *PooledBroadcastBehaviour) nextPendingOutbound() (BehaviourEvent, bool) 
 	return ev, true
 }
 
-func (b *PooledBroadcastBehaviour) nextPendingInbound() (CtxEvent[BehaviourEvent], bool) {
+func (b *PooledBroadcastBehaviour[K, N, M]) nextPendingInbound() (CtxEvent[BehaviourEvent], bool) {
 	return b.inbound.dequeue()
 }
 
@@ -278,7 +288,7 @@ func (b *PooledBroadcastBehaviour) nextPendingInbound() (CtxEvent[BehaviourEvent
 // node's response before contacting the next.
 //
 // A behaviour with no work to do arms a timer for the broadcast's next due time.
-func (b *PooledBroadcastBehaviour) updateReadyStatus(performed bool) {
+func (b *PooledBroadcastBehaviour[K, N, M]) updateReadyStatus(performed bool) {
 	if performed || b.pollAgain || len(b.pendingOutbound) != 0 {
 		signalReady(b.ready)
 		return
@@ -292,7 +302,7 @@ func (b *PooledBroadcastBehaviour) updateReadyStatus(performed bool) {
 	b.readyTimer.Arm(b.nextDue)
 }
 
-func (b *PooledBroadcastBehaviour) perfomNextInbound(ctx context.Context) (BehaviourEvent, bool) {
+func (b *PooledBroadcastBehaviour[K, N, M]) perfomNextInbound(ctx context.Context) (BehaviourEvent, bool) {
 	ctx, span := b.tracer.Start(ctx, "PooledBroadcastBehaviour.perfomNextInbound")
 	defer span.End()
 	pev, ok := b.nextPendingInbound()
@@ -302,8 +312,8 @@ func (b *PooledBroadcastBehaviour) perfomNextInbound(ctx context.Context) (Behav
 
 	var cmd brdcst.PoolEvent
 	switch ev := pev.Event.(type) {
-	case *EventStartBroadcast:
-		cmd = &brdcst.EventPoolStartBroadcast[kadt.Key, kadt.PeerID, *pb.Message]{
+	case *EventStartBroadcast[K, N, M]:
+		cmd = &brdcst.EventPoolStartBroadcast[K, N, M]{
 			QueryID: ev.QueryID,
 			Target:  ev.Target,
 			Message: ev.Message,
@@ -311,60 +321,60 @@ func (b *PooledBroadcastBehaviour) perfomNextInbound(ctx context.Context) (Behav
 			Config:  ev.Config,
 		}
 		if ev.Notify != nil {
-			b.notifiers[ev.QueryID] = &queryNotifier[*EventBroadcastFinished]{monitor: ev.Notify}
+			b.notifiers[ev.QueryID] = &queryNotifier[K, N, M, *EventBroadcastFinished[K, N]]{monitor: ev.Notify}
 		}
 
-	case *EventGetCloserNodesSuccess:
+	case *EventGetCloserNodesSuccess[K, N]:
 		for _, info := range ev.CloserNodes {
-			b.pendingOutbound = append(b.pendingOutbound, &EventAddNode{
+			b.pendingOutbound = append(b.pendingOutbound, &EventAddNode[K, N]{
 				NodeID: info,
 			})
 		}
 
 		waiter, ok := b.notifiers[ev.QueryID]
 		if ok {
-			waiter.TryNotifyProgressed(ctx, &EventQueryProgressed{
+			waiter.TryNotifyProgressed(ctx, &EventQueryProgressed[K, N, M]{
 				NodeID:  ev.To,
 				QueryID: ev.QueryID,
 			})
 		}
 
-		cmd = &brdcst.EventPoolGetCloserNodesSuccess[kadt.Key, kadt.PeerID]{
+		cmd = &brdcst.EventPoolGetCloserNodesSuccess[K, N]{
 			NodeID:      ev.To,
 			QueryID:     ev.QueryID,
 			Target:      ev.Target,
 			CloserNodes: ev.CloserNodes,
 		}
 
-	case *EventGetCloserNodesFailure:
+	case *EventGetCloserNodesFailure[K, N]:
 		// queue an event that will notify the routing behaviour of a failed node
-		b.pendingOutbound = append(b.pendingOutbound, &EventNotifyNonConnectivity{
+		b.pendingOutbound = append(b.pendingOutbound, &EventNotifyNonConnectivity[K, N]{
 			ev.To,
 		})
 
-		cmd = &brdcst.EventPoolGetCloserNodesFailure[kadt.Key, kadt.PeerID]{
+		cmd = &brdcst.EventPoolGetCloserNodesFailure[K, N]{
 			NodeID:  ev.To,
 			QueryID: ev.QueryID,
 			Target:  ev.Target,
 			Error:   ev.Err,
 		}
 
-	case *EventSendMessageSuccess:
+	case *EventSendMessageSuccess[K, N, M]:
 		for _, info := range ev.CloserNodes {
-			b.pendingOutbound = append(b.pendingOutbound, &EventAddNode{
+			b.pendingOutbound = append(b.pendingOutbound, &EventAddNode[K, N]{
 				NodeID: info,
 			})
 		}
 		waiter, ok := b.notifiers[ev.QueryID]
 		if ok {
-			waiter.TryNotifyProgressed(ctx, &EventQueryProgressed{
+			waiter.TryNotifyProgressed(ctx, &EventQueryProgressed[K, N, M]{
 				NodeID:   ev.To,
 				QueryID:  ev.QueryID,
 				Response: ev.Response,
 			})
 		}
-		if err := verifyStoredRecord(ev.Request, ev.Response); err != nil {
-			cmd = &brdcst.EventPoolStoreRecordFailure[kadt.Key, kadt.PeerID, *pb.Message]{
+		if err := b.verifyResponse(ev.Request, ev.Response); err != nil {
+			cmd = &brdcst.EventPoolStoreRecordFailure[K, N, M]{
 				QueryID: ev.QueryID,
 				NodeID:  ev.To,
 				Request: ev.Request,
@@ -374,21 +384,21 @@ func (b *PooledBroadcastBehaviour) perfomNextInbound(ctx context.Context) (Behav
 		}
 
 		// TODO: How do we know it's a StoreRecord response?
-		cmd = &brdcst.EventPoolStoreRecordSuccess[kadt.Key, kadt.PeerID, *pb.Message]{
+		cmd = &brdcst.EventPoolStoreRecordSuccess[K, N, M]{
 			QueryID:  ev.QueryID,
 			NodeID:   ev.To,
 			Request:  ev.Request,
 			Response: ev.Response,
 		}
 
-	case *EventSendMessageFailure:
+	case *EventSendMessageFailure[K, N, M]:
 		// queue an event that will notify the routing behaviour of a failed node
-		b.pendingOutbound = append(b.pendingOutbound, &EventNotifyNonConnectivity{
+		b.pendingOutbound = append(b.pendingOutbound, &EventNotifyNonConnectivity[K, N]{
 			ev.To,
 		})
 
 		// TODO: How do we know it's a StoreRecord response?
-		cmd = &brdcst.EventPoolStoreRecordFailure[kadt.Key, kadt.PeerID, *pb.Message]{
+		cmd = &brdcst.EventPoolStoreRecordFailure[K, N, M]{
 			NodeID:  ev.To,
 			QueryID: ev.QueryID,
 			Request: ev.Request,
@@ -405,10 +415,10 @@ func (b *PooledBroadcastBehaviour) perfomNextInbound(ctx context.Context) (Behav
 	return b.advancePool(ctx, b.clk.Now(), cmd)
 }
 
-func (b *PooledBroadcastBehaviour) advancePool(ctx context.Context, now time.Time, ev brdcst.PoolEvent) (out BehaviourEvent, term bool) {
-	ctx, span := b.tracer.Start(ctx, "PooledBroadcastBehaviour.advancePool", trace.WithAttributes(tele.AttrInEvent(ev)))
+func (b *PooledBroadcastBehaviour[K, N, M]) advancePool(ctx context.Context, now time.Time, ev brdcst.PoolEvent) (out BehaviourEvent, term bool) {
+	ctx, span := b.tracer.Start(ctx, "PooledBroadcastBehaviour.advancePool", trace.WithAttributes(coordt.AttrInEvent(ev)))
 	defer func() {
-		span.SetAttributes(tele.AttrOutEvent(out))
+		span.SetAttributes(coordt.AttrOutEvent(out))
 		span.End()
 	}()
 
@@ -422,27 +432,27 @@ func (b *PooledBroadcastBehaviour) advancePool(ctx context.Context, now time.Tim
 	case *brdcst.StatePoolWaiting:
 		// nothing to do except wait for message responses or timeouts
 		b.nextDue = st.NextDue
-	case *brdcst.StatePoolFindCloser[kadt.Key, kadt.PeerID]:
-		return &EventOutboundGetCloserNodes{
+	case *brdcst.StatePoolFindCloser[K, N]:
+		return &EventOutboundGetCloserNodes[K, N]{
 			QueryID: st.QueryID,
 			To:      st.NodeID,
 			Target:  st.Target,
 			Notify:  b,
 		}, true
-	case *brdcst.StatePoolStoreRecord[kadt.Key, kadt.PeerID, *pb.Message]:
-		return &EventOutboundSendMessage{
+	case *brdcst.StatePoolStoreRecord[K, N, M]:
+		return &EventOutboundSendMessage[K, N, M]{
 			QueryID: st.QueryID,
 			To:      st.NodeID,
 			Message: st.Message,
 			Notify:  b,
 		}, true
-	case *brdcst.StatePoolBroadcastFinished[kadt.Key, kadt.PeerID]:
+	case *brdcst.StatePoolBroadcastFinished[K, N]:
 		// the state carries no due time and the pool has removed the broadcast, so the
 		// pool must be advanced again to report when the remaining broadcasts are next due
 		b.pollAgain = true
 		waiter, ok := b.notifiers[st.QueryID]
 		if ok {
-			waiter.NotifyFinished(ctx, &EventBroadcastFinished{
+			waiter.NotifyFinished(ctx, &EventBroadcastFinished[K, N]{
 				QueryID:   st.QueryID,
 				Contacted: st.Contacted,
 				Errors:    st.Errors,
@@ -455,51 +465,31 @@ func (b *PooledBroadcastBehaviour) advancePool(ctx context.Context, now time.Tim
 }
 
 // A BroadcastWaiter implements [QueryMonitor] for broadcasts
-type BroadcastWaiter struct {
-	progressed chan CtxEvent[*EventQueryProgressed]
-	finished   chan CtxEvent[*EventBroadcastFinished]
+type BroadcastWaiter[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
+	progressed chan CtxEvent[*EventQueryProgressed[K, N, M]]
+	finished   chan CtxEvent[*EventBroadcastFinished[K, N]]
 }
 
-var _ QueryMonitor[*EventBroadcastFinished] = (*BroadcastWaiter)(nil)
-
-func NewBroadcastWaiter(n int) *BroadcastWaiter {
-	w := &BroadcastWaiter{
-		progressed: make(chan CtxEvent[*EventQueryProgressed], n),
-		finished:   make(chan CtxEvent[*EventBroadcastFinished], 1),
+func NewBroadcastWaiter[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](n int) *BroadcastWaiter[K, N, M] {
+	w := &BroadcastWaiter[K, N, M]{
+		progressed: make(chan CtxEvent[*EventQueryProgressed[K, N, M]], n),
+		finished:   make(chan CtxEvent[*EventBroadcastFinished[K, N]], 1),
 	}
 	return w
 }
 
-func (w *BroadcastWaiter) Progressed() <-chan CtxEvent[*EventQueryProgressed] {
+func (w *BroadcastWaiter[K, N, M]) Progressed() <-chan CtxEvent[*EventQueryProgressed[K, N, M]] {
 	return w.progressed
 }
 
-func (w *BroadcastWaiter) Finished() <-chan CtxEvent[*EventBroadcastFinished] {
+func (w *BroadcastWaiter[K, N, M]) Finished() <-chan CtxEvent[*EventBroadcastFinished[K, N]] {
 	return w.finished
 }
 
-func (w *BroadcastWaiter) NotifyProgressed() chan<- CtxEvent[*EventQueryProgressed] {
+func (w *BroadcastWaiter[K, N, M]) NotifyProgressed() chan<- CtxEvent[*EventQueryProgressed[K, N, M]] {
 	return w.progressed
 }
 
-func (w *BroadcastWaiter) NotifyFinished() chan<- CtxEvent[*EventBroadcastFinished] {
+func (w *BroadcastWaiter[K, N, M]) NotifyFinished() chan<- CtxEvent[*EventBroadcastFinished[K, N]] {
 	return w.finished
-}
-
-// verifyStoredRecord checks that a remote node stored the record it was sent.
-// Only PUT_VALUE draws an echoed record back.
-func verifyStoredRecord(req, resp *pb.Message) error {
-	if req.GetType() != pb.Message_PUT_VALUE {
-		return nil
-	}
-
-	if resp == nil {
-		return fmt.Errorf("no response to PUT_VALUE")
-	}
-
-	if !bytes.Equal(resp.GetRecord().GetValue(), req.GetRecord().GetValue()) {
-		return fmt.Errorf("record not stored correctly")
-	}
-
-	return nil
 }

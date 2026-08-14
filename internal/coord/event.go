@@ -1,10 +1,10 @@
 package coord
 
 import (
+	"github.com/ipfs/go-libdht/kad"
+
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/query"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
 )
 
 type BehaviourEvent interface {
@@ -56,59 +56,59 @@ type TerminalQueryEvent interface {
 	terminalQueryEvent()
 }
 
-type EventStartBootstrap struct {
+type EventStartBootstrap[K kad.Key[K], N kad.NodeID[K]] struct {
 	// SeedNodes are the nodes the bootstrap should start from. When empty the nodes
 	// configured as [RoutingConfig.BootstrapPeers] are used.
-	SeedNodes []kadt.PeerID
+	SeedNodes []N
 }
 
-func (*EventStartBootstrap) behaviourEvent() {}
-func (*EventStartBootstrap) routingCommand() {}
+func (*EventStartBootstrap[K, N]) behaviourEvent() {}
+func (*EventStartBootstrap[K, N]) routingCommand() {}
 
-type EventOutboundGetCloserNodes struct {
+type EventOutboundGetCloserNodes[K kad.Key[K], N kad.NodeID[K]] struct {
 	QueryID coordt.QueryID
-	To      kadt.PeerID
-	Target  kadt.Key
+	To      N
+	Target  K
 	Notify  Notify[BehaviourEvent]
 }
 
-func (*EventOutboundGetCloserNodes) behaviourEvent()     {}
-func (*EventOutboundGetCloserNodes) nodeHandlerRequest() {}
-func (*EventOutboundGetCloserNodes) networkCommand()     {}
+func (*EventOutboundGetCloserNodes[K, N]) behaviourEvent()     {}
+func (*EventOutboundGetCloserNodes[K, N]) nodeHandlerRequest() {}
+func (*EventOutboundGetCloserNodes[K, N]) networkCommand()     {}
 
-type EventOutboundSendMessage struct {
+type EventOutboundSendMessage[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID coordt.QueryID
-	To      kadt.PeerID
-	Message *pb.Message
+	To      N
+	Message M
 	Notify  Notify[BehaviourEvent]
 }
 
-func (*EventOutboundSendMessage) behaviourEvent()     {}
-func (*EventOutboundSendMessage) nodeHandlerRequest() {}
-func (*EventOutboundSendMessage) networkCommand()     {}
+func (*EventOutboundSendMessage[K, N, M]) behaviourEvent()     {}
+func (*EventOutboundSendMessage[K, N, M]) nodeHandlerRequest() {}
+func (*EventOutboundSendMessage[K, N, M]) networkCommand()     {}
 
-type EventStartMessageQuery struct {
+type EventStartMessageQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID           coordt.QueryID
-	Target            kadt.Key
-	Message           *pb.Message
-	KnownClosestNodes []kadt.PeerID
-	Notify            QueryMonitor[*EventQueryFinished]
+	Target            K
+	Message           M
+	KnownClosestNodes []N
+	Notify            QueryMonitor[K, N, M, *EventQueryFinished[K, N]]
 	NumResults        int // the minimum number of nodes to successfully contact before considering iteration complete
 }
 
-func (*EventStartMessageQuery) behaviourEvent() {}
-func (*EventStartMessageQuery) queryCommand()   {}
+func (*EventStartMessageQuery[K, N, M]) behaviourEvent() {}
+func (*EventStartMessageQuery[K, N, M]) queryCommand()   {}
 
-type EventStartFindCloserQuery struct {
+type EventStartFindCloserQuery[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID           coordt.QueryID
-	Target            kadt.Key
-	KnownClosestNodes []kadt.PeerID
-	Notify            QueryMonitor[*EventQueryFinished]
+	Target            K
+	KnownClosestNodes []N
+	Notify            QueryMonitor[K, N, M, *EventQueryFinished[K, N]]
 	NumResults        int // the minimum number of nodes to successfully contact before considering iteration complete
 }
 
-func (*EventStartFindCloserQuery) behaviourEvent() {}
-func (*EventStartFindCloserQuery) queryCommand()   {}
+func (*EventStartFindCloserQuery[K, N, M]) behaviourEvent() {}
+func (*EventStartFindCloserQuery[K, N, M]) queryCommand()   {}
 
 type EventStopQuery struct {
 	QueryID coordt.QueryID
@@ -117,81 +117,81 @@ type EventStopQuery struct {
 func (*EventStopQuery) behaviourEvent() {}
 func (*EventStopQuery) queryCommand()   {}
 
-// EventAddNode notifies the routing behaviour of a potential new peer.
-type EventAddNode struct {
-	NodeID kadt.PeerID
+// EventAddNode notifies the routing behaviour of a potential new node.
+type EventAddNode[K kad.Key[K], N kad.NodeID[K]] struct {
+	NodeID N
 }
 
-func (*EventAddNode) behaviourEvent() {}
-func (*EventAddNode) routingCommand() {}
+func (*EventAddNode[K, N]) behaviourEvent() {}
+func (*EventAddNode[K, N]) routingCommand() {}
 
 // EventGetCloserNodesSuccess notifies a behaviour that a GetCloserNodes request, initiated by an
 // [EventOutboundGetCloserNodes] event has produced a successful response.
-type EventGetCloserNodesSuccess struct {
+type EventGetCloserNodesSuccess[K kad.Key[K], N kad.NodeID[K]] struct {
 	QueryID     coordt.QueryID
-	To          kadt.PeerID // To is the peer that the GetCloserNodes request was sent to.
-	Target      kadt.Key
-	CloserNodes []kadt.PeerID
+	To          N // To is the node that the GetCloserNodes request was sent to.
+	Target      K
+	CloserNodes []N
 }
 
-func (*EventGetCloserNodesSuccess) behaviourEvent()      {}
-func (*EventGetCloserNodesSuccess) nodeHandlerResponse() {}
+func (*EventGetCloserNodesSuccess[K, N]) behaviourEvent()      {}
+func (*EventGetCloserNodesSuccess[K, N]) nodeHandlerResponse() {}
 
 // EventGetCloserNodesFailure notifies a behaviour that a GetCloserNodes request, initiated by an
 // [EventOutboundGetCloserNodes] event has failed to produce a valid response.
-type EventGetCloserNodesFailure struct {
+type EventGetCloserNodesFailure[K kad.Key[K], N kad.NodeID[K]] struct {
 	QueryID coordt.QueryID
-	To      kadt.PeerID // To is the peer that the GetCloserNodes request was sent to.
-	Target  kadt.Key
+	To      N // To is the node that the GetCloserNodes request was sent to.
+	Target  K
 	Err     error
 }
 
-func (*EventGetCloserNodesFailure) behaviourEvent()      {}
-func (*EventGetCloserNodesFailure) nodeHandlerResponse() {}
+func (*EventGetCloserNodesFailure[K, N]) behaviourEvent()      {}
+func (*EventGetCloserNodesFailure[K, N]) nodeHandlerResponse() {}
 
 // EventSendMessageSuccess notifies a behaviour that a SendMessage request, initiated by an
 // [EventOutboundSendMessage] event has produced a successful response.
-type EventSendMessageSuccess struct {
+type EventSendMessageSuccess[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID     coordt.QueryID
-	Request     *pb.Message
-	To          kadt.PeerID // To is the peer that the SendMessage request was sent to.
-	Response    *pb.Message
-	CloserNodes []kadt.PeerID
+	Request     M
+	To          N // To is the node that the SendMessage request was sent to.
+	Response    M
+	CloserNodes []N
 }
 
-func (*EventSendMessageSuccess) behaviourEvent()      {}
-func (*EventSendMessageSuccess) nodeHandlerResponse() {}
+func (*EventSendMessageSuccess[K, N, M]) behaviourEvent()      {}
+func (*EventSendMessageSuccess[K, N, M]) nodeHandlerResponse() {}
 
 // EventSendMessageFailure notifies a behaviour that a SendMessage request, initiated by an
 // [EventOutboundSendMessage] event has failed to produce a valid response.
-type EventSendMessageFailure struct {
+type EventSendMessageFailure[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID coordt.QueryID
-	Request *pb.Message
-	To      kadt.PeerID // To is the peer that the SendMessage request was sent to.
-	Target  kadt.Key
+	Request M
+	To      N // To is the node that the SendMessage request was sent to.
+	Target  K
 	Err     error
 }
 
-func (*EventSendMessageFailure) behaviourEvent()      {}
-func (*EventSendMessageFailure) nodeHandlerResponse() {}
+func (*EventSendMessageFailure[K, N, M]) behaviourEvent()      {}
+func (*EventSendMessageFailure[K, N, M]) nodeHandlerResponse() {}
 
 // EventQueryProgressed is emitted by the coordinator when a query has received a
 // response from a node.
-type EventQueryProgressed struct {
+type EventQueryProgressed[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID  coordt.QueryID
-	NodeID   kadt.PeerID
-	Response *pb.Message
+	NodeID   N
+	Response M
 	Stats    query.QueryStats
 }
 
-func (*EventQueryProgressed) behaviourEvent() {}
+func (*EventQueryProgressed[K, N, M]) behaviourEvent() {}
 
 // EventQueryFinished is emitted by the coordinator when a query has finished, either through
 // running to completion or by being canceled.
-type EventQueryFinished struct {
+type EventQueryFinished[K kad.Key[K], N kad.NodeID[K]] struct {
 	QueryID      coordt.QueryID
 	Stats        query.QueryStats
-	ClosestNodes []kadt.PeerID
+	ClosestNodes []N
 
 	// Err records why the query ended when it ended for a reason other than visiting
 	// every node it could, and is nil otherwise. ClosestNodes is not populated when
@@ -199,24 +199,24 @@ type EventQueryFinished struct {
 	Err error
 }
 
-func (*EventQueryFinished) behaviourEvent()     {}
-func (*EventQueryFinished) terminalQueryEvent() {}
+func (*EventQueryFinished[K, N]) behaviourEvent()     {}
+func (*EventQueryFinished[K, N]) terminalQueryEvent() {}
 
 // EventRoutingUpdated is emitted by the coordinator when a new node has been verified and added to the routing table.
-type EventRoutingUpdated struct {
-	NodeID kadt.PeerID
+type EventRoutingUpdated[K kad.Key[K], N kad.NodeID[K]] struct {
+	NodeID N
 }
 
-func (*EventRoutingUpdated) behaviourEvent()      {}
-func (*EventRoutingUpdated) routingNotification() {}
+func (*EventRoutingUpdated[K, N]) behaviourEvent()      {}
+func (*EventRoutingUpdated[K, N]) routingNotification() {}
 
 // EventRoutingRemoved is emitted by the coordinator when new node has been removed from the routing table.
-type EventRoutingRemoved struct {
-	NodeID kadt.PeerID
+type EventRoutingRemoved[K kad.Key[K], N kad.NodeID[K]] struct {
+	NodeID N
 }
 
-func (*EventRoutingRemoved) behaviourEvent()      {}
-func (*EventRoutingRemoved) routingNotification() {}
+func (*EventRoutingRemoved[K, N]) behaviourEvent()      {}
+func (*EventRoutingRemoved[K, N]) routingNotification() {}
 
 // EventBootstrapFinished is emitted by the coordinator when a bootstrap has finished, either through
 // running to completion or by being canceled.
@@ -231,25 +231,25 @@ type EventBootstrapFinished struct {
 func (*EventBootstrapFinished) behaviourEvent()      {}
 func (*EventBootstrapFinished) routingNotification() {}
 
-// EventNotifyConnectivity notifies a behaviour that a peer's connectivity and support for finding closer nodes
+// EventNotifyConnectivity notifies a behaviour that a node's connectivity and support for finding closer nodes
 // has been confirmed such as from a successful query response or an inbound query. This should not be used for
-// general connections to the host but only when it is confirmed that the peer responds to requests for closer
+// general connections to the host but only when it is confirmed that the node responds to requests for closer
 // nodes.
-type EventNotifyConnectivity struct {
-	NodeID kadt.PeerID
+type EventNotifyConnectivity[K kad.Key[K], N kad.NodeID[K]] struct {
+	NodeID N
 }
 
-func (*EventNotifyConnectivity) behaviourEvent() {}
-func (*EventNotifyConnectivity) routingCommand() {}
+func (*EventNotifyConnectivity[K, N]) behaviourEvent() {}
+func (*EventNotifyConnectivity[K, N]) routingCommand() {}
 
-// EventNotifyNonConnectivity notifies a behaviour that a peer does not have connectivity and/or does not support
+// EventNotifyNonConnectivity notifies a behaviour that a node does not have connectivity and/or does not support
 // finding closer nodes is known.
-type EventNotifyNonConnectivity struct {
-	NodeID kadt.PeerID
+type EventNotifyNonConnectivity[K kad.Key[K], N kad.NodeID[K]] struct {
+	NodeID N
 }
 
-func (*EventNotifyNonConnectivity) behaviourEvent() {}
-func (*EventNotifyNonConnectivity) routingCommand() {}
+func (*EventNotifyNonConnectivity[K, N]) behaviourEvent() {}
+func (*EventNotifyNonConnectivity[K, N]) routingCommand() {}
 
 // EventRoutingPoll notifies a routing behaviour that it may proceed with any pending work.
 type EventRoutingPoll struct{}

@@ -18,38 +18,38 @@ import (
 	"github.com/probe-lab/zikade/pb"
 )
 
-// TestNetworkBehaviourDropsRequestsBeyondPeerCapacity checks that requests to a peer that
+// TestNetworkBehaviourDropsRequestsBeyondNodeCapacity checks that requests to a node that
 // has used up its capacity are refused and reported back as failures, rather than made to
-// wait for the peer, which would stop the event loop that is the only thing able to drain
+// wait for the node, which would stop the event loop that is the only thing able to drain
 // the handler.
-func TestNetworkBehaviourDropsRequestsBeyondPeerCapacity(t *testing.T) {
+func TestNetworkBehaviourDropsRequestsBeyondNodeCapacity(t *testing.T) {
 	ctx := kadtest.CtxShort(t)
 
 	_, nodes, err := nettest.LinearTopology(2, clock.New())
 	require.NoError(t, err)
 
 	cfg := DefaultNetworkConfig()
-	cfg.PeerCapacity = 1
+	cfg.NodeCapacity = 1
 
 	// the router never answers, so the first request holds the peer's only slot for the
 	// rest of the test
-	b, err := NewNetworkBehaviour(&silentRouter{}, cfg)
+	b, err := NewNetworkBehaviour[kadt.Key, kadt.PeerID, *pb.Message](&silentRouter{}, cfg)
 	require.NoError(t, err)
 	t.Cleanup(b.Close)
 
 	var mu sync.Mutex
-	var failures []*EventGetCloserNodesFailure
+	var failures []*EventGetCloserNodesFailure[kadt.Key, kadt.PeerID]
 
 	notify := NotifyFunc[BehaviourEvent](func(ctx context.Context, ev BehaviourEvent) {
 		mu.Lock()
 		defer mu.Unlock()
-		if fev, ok := ev.(*EventGetCloserNodesFailure); ok {
+		if fev, ok := ev.(*EventGetCloserNodesFailure[kadt.Key, kadt.PeerID]); ok {
 			failures = append(failures, fev)
 		}
 	})
 
 	for range 3 {
-		b.Notify(ctx, &EventOutboundGetCloserNodes{
+		b.Notify(ctx, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{
 			QueryID: "test",
 			To:      nodes[1].NodeID,
 			Target:  nodes[1].NodeID.Key(),
@@ -81,10 +81,10 @@ func (r *promptRouter) GetClosestNodes(ctx context.Context, to kadt.PeerID, targ
 }
 
 // handlerFor returns the node handler the behaviour holds for a peer, or nil if it holds none.
-func (b *NetworkBehaviour) handlerFor(to kadt.PeerID) *NodeHandler {
+func (b *NetworkBehaviour[K, N, M]) handlerFor(to N) *NodeHandler[K, N, M] {
 	b.nodeHandlersMu.Lock()
 	defer b.nodeHandlersMu.Unlock()
-	return b.nodeHandlers[to]
+	return b.nodeHandlers[to.String()]
 }
 
 // TestNetworkBehaviourEvictsIdleNodeHandlers checks that an unused node handler is removed
@@ -98,7 +98,7 @@ func TestNetworkBehaviourEvictsIdleNodeHandlers(t *testing.T) {
 
 		cfg := DefaultNetworkConfig()
 
-		b, err := NewNetworkBehaviour(&promptRouter{}, cfg)
+		b, err := NewNetworkBehaviour[kadt.Key, kadt.PeerID, *pb.Message](&promptRouter{}, cfg)
 		require.NoError(t, err)
 		t.Cleanup(b.Close)
 
@@ -106,7 +106,7 @@ func TestNetworkBehaviourEvictsIdleNodeHandlers(t *testing.T) {
 
 		peers := nodes[1:]
 		for _, n := range peers {
-			b.Notify(ctx, &EventOutboundGetCloserNodes{
+			b.Notify(ctx, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{
 				QueryID: "test",
 				To:      n.NodeID,
 				Target:  n.NodeID.Key(),
@@ -163,13 +163,13 @@ func TestNetworkBehaviourKeepsBusyNodeHandlers(t *testing.T) {
 		cfg := DefaultNetworkConfig()
 
 		rtr := &blockingRouter{release: make(chan struct{})}
-		b, err := NewNetworkBehaviour(rtr, cfg)
+		b, err := NewNetworkBehaviour[kadt.Key, kadt.PeerID, *pb.Message](rtr, cfg)
 		require.NoError(t, err)
 		t.Cleanup(b.Close)
 
 		notify := NotifyFunc[BehaviourEvent](func(ctx context.Context, ev BehaviourEvent) {})
 
-		b.Notify(ctx, &EventOutboundGetCloserNodes{
+		b.Notify(ctx, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{
 			QueryID: "test",
 			To:      nodes[1].NodeID,
 			Target:  nodes[1].NodeID.Key(),
@@ -203,13 +203,13 @@ func TestEvictIdleRefusesBusyHandler(t *testing.T) {
 		require.NoError(t, err)
 
 		rtr := &blockingRouter{release: make(chan struct{})}
-		b, err := NewNetworkBehaviour(rtr, DefaultNetworkConfig())
+		b, err := NewNetworkBehaviour[kadt.Key, kadt.PeerID, *pb.Message](rtr, DefaultNetworkConfig())
 		require.NoError(t, err)
 		t.Cleanup(b.Close)
 
 		notify := NotifyFunc[BehaviourEvent](func(ctx context.Context, ev BehaviourEvent) {})
 
-		b.Notify(ctx, &EventOutboundGetCloserNodes{
+		b.Notify(ctx, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{
 			QueryID: "test",
 			To:      nodes[1].NodeID,
 			Target:  nodes[1].NodeID.Key(),
@@ -247,7 +247,7 @@ func TestNetworkBehaviourReportsInFlightRequests(t *testing.T) {
 
 	// the router never answers, so every request stays in flight for the whole test
 	rtr := &blockingRouter{release: make(chan struct{})}
-	b, err := NewNetworkBehaviour(rtr, cfg)
+	b, err := NewNetworkBehaviour[kadt.Key, kadt.PeerID, *pb.Message](rtr, cfg)
 	require.NoError(t, err)
 	t.Cleanup(b.Close)
 
@@ -255,7 +255,7 @@ func TestNetworkBehaviourReportsInFlightRequests(t *testing.T) {
 
 	peers := nodes[1:]
 	for _, n := range peers {
-		b.Notify(ctx, &EventOutboundGetCloserNodes{
+		b.Notify(ctx, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{
 			QueryID: "test",
 			To:      n.NodeID,
 			Target:  n.NodeID.Key(),

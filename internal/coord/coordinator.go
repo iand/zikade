@@ -20,15 +20,12 @@ import (
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/routing"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
-	"github.com/probe-lab/zikade/tele"
 )
 
 // A Coordinator coordinates the state machines that comprise a Kademlia DHT
-type Coordinator struct {
-	// self is the peer id of the system the dht is running on
-	self kadt.PeerID
+type Coordinator[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
+	// self is the node id of the system the dht is running on
+	self N
 
 	// cancel is used to cancel all running goroutines when the coordinator is cleaning up
 	cancel context.CancelFunc
@@ -39,16 +36,16 @@ type Coordinator struct {
 	done chan struct{}
 
 	// cfg is a copy of the optional configuration supplied to the dht
-	cfg CoordinatorConfig
+	cfg CoordinatorConfig[K, N, M]
 
 	// rt is the routing table used to look up nodes by distance
-	rt kad.RoutingTable[kadt.Key, kadt.PeerID]
+	rt kad.RoutingTable[K, N]
 
 	// rtr is the message router used to send messages
-	rtr coordt.Router[kadt.Key, kadt.PeerID, *pb.Message]
+	rtr coordt.Router[K, N, M]
 
 	// networkBehaviour is the behaviour responsible for communicating with the network
-	networkBehaviour *NetworkBehaviour
+	networkBehaviour *NetworkBehaviour[K, N, M]
 
 	// routingBehaviour is the behaviour responsible for maintaining the routing table
 	routingBehaviour Behaviour[BehaviourEvent, BehaviourEvent]
@@ -76,7 +73,7 @@ type RoutingNotifier interface {
 	Notify(context.Context, RoutingNotification)
 }
 
-type CoordinatorConfig struct {
+type CoordinatorConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	// Clock is a clock that may replaced by a mock when testing
 	Clock clock.Clock
 
@@ -89,21 +86,21 @@ type CoordinatorConfig struct {
 	// TracerProvider is the tracer provider to use when initialising tracing
 	TracerProvider trace.TracerProvider
 
-	// Network is the configuration used for the [NetworkBehaviour] which sends requests to other peers.
+	// Network is the configuration used for the [NetworkBehaviour] which sends requests to other nodes.
 	Network NetworkConfig
 
 	// Routing is the configuration used for the [RoutingBehaviour] which maintains the health of the routing table.
-	Routing RoutingConfig
+	Routing RoutingConfig[K, N]
 
 	// Query is the configuration used for the [PooledQueryBehaviour] which manages the execution of user queries.
 	Query QueryConfig
 
-	// Brdcst is the configuration used for the [PooledBroadcastBehaviour] which manages the storing of records with other peers.
-	Brdcst BroadcastConfig
+	// Brdcst is the configuration used for the [PooledBroadcastBehaviour] which manages the storing of records with other nodes.
+	Brdcst BroadcastConfig[K, N, M]
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
-func (cfg *CoordinatorConfig) Validate() error {
+func (cfg *CoordinatorConfig[K, N, M]) Validate() error {
 	if cfg.Clock == nil {
 		return &errs.ConfigurationError{
 			Component: "CoordinatorConfig",
@@ -154,11 +151,11 @@ func (cfg *CoordinatorConfig) Validate() error {
 	return nil
 }
 
-func DefaultCoordinatorConfig() *CoordinatorConfig {
-	cfg := &CoordinatorConfig{
+func DefaultCoordinatorConfig[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]]() *CoordinatorConfig[K, N, M] {
+	cfg := &CoordinatorConfig[K, N, M]{
 		Clock: clock.New(),
 
-		Logger:         tele.DefaultLogger("coord"),
+		Logger:         slog.Default(),
 		MeterProvider:  otel.GetMeterProvider(),
 		TracerProvider: otel.GetTracerProvider(),
 	}
@@ -166,32 +163,38 @@ func DefaultCoordinatorConfig() *CoordinatorConfig {
 	cfg.Query = *DefaultQueryConfig()
 	cfg.Query.Clock = cfg.Clock
 	cfg.Query.Logger = cfg.Logger.With("behaviour", "pooledquery")
-	cfg.Query.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
-	cfg.Query.Meter = cfg.MeterProvider.Meter(tele.MeterName)
+	cfg.Query.Tracer = cfg.TracerProvider.Tracer(tracerName)
+	cfg.Query.Meter = cfg.MeterProvider.Meter(meterName)
 
-	cfg.Routing = *DefaultRoutingConfig()
+	cfg.Routing = *DefaultRoutingConfig[K, N]()
 	cfg.Routing.Clock = cfg.Clock
 	cfg.Routing.Logger = cfg.Logger.With("behaviour", "routing")
-	cfg.Routing.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
-	cfg.Routing.Meter = cfg.MeterProvider.Meter(tele.MeterName)
+	cfg.Routing.Tracer = cfg.TracerProvider.Tracer(tracerName)
+	cfg.Routing.Meter = cfg.MeterProvider.Meter(meterName)
 
-	cfg.Brdcst = *DefaultBroadcastConfig()
+	cfg.Brdcst = *DefaultBroadcastConfig[K, N, M]()
 	cfg.Brdcst.Clock = cfg.Clock
 	cfg.Brdcst.Logger = cfg.Logger
-	cfg.Brdcst.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
-	cfg.Brdcst.Meter = cfg.MeterProvider.Meter(tele.MeterName)
+	cfg.Brdcst.Tracer = cfg.TracerProvider.Tracer(tracerName)
+	cfg.Brdcst.Meter = cfg.MeterProvider.Meter(meterName)
 
 	cfg.Network = *DefaultNetworkConfig()
 	cfg.Network.Logger = cfg.Logger
-	cfg.Network.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
-	cfg.Network.Meter = cfg.MeterProvider.Meter(tele.MeterName)
+	cfg.Network.Tracer = cfg.TracerProvider.Tracer(tracerName)
+	cfg.Network.Meter = cfg.MeterProvider.Meter(meterName)
 
 	return cfg
 }
 
-func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *pb.Message], rt routing.RoutingTableCpl[kadt.Key, kadt.PeerID], cfg *CoordinatorConfig) (*Coordinator, error) {
+func NewCoordinator[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](
+	self N,
+	rtr coordt.Router[K, N, M],
+	rt routing.RoutingTableCpl[K, N],
+	cplFn routing.NodeIDForCplFunc[K, N],
+	cfg *CoordinatorConfig[K, N, M],
+) (*Coordinator[K, N, M], error) {
 	if cfg == nil {
-		cfg = DefaultCoordinatorConfig()
+		cfg = DefaultCoordinatorConfig[K, N, M]()
 	} else if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -201,8 +204,8 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 	ccfg := *cfg
 	cfg = &ccfg
 
-	behaviourTracer := cfg.TracerProvider.Tracer(tele.TracerName)
-	behaviourMeter := cfg.MeterProvider.Meter(tele.MeterName)
+	behaviourTracer := cfg.TracerProvider.Tracer(tracerName)
+	behaviourMeter := cfg.MeterProvider.Meter(meterName)
 
 	cfg.Query.Tracer, cfg.Query.Meter = behaviourTracer, behaviourMeter
 	cfg.Routing.Tracer, cfg.Routing.Meter = behaviourTracer, behaviourMeter
@@ -215,17 +218,17 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 		return nil, fmt.Errorf("init telemetry: %w", err)
 	}
 
-	queryBehaviour, err := NewQueryBehaviour(self, &cfg.Query)
+	queryBehaviour, err := NewQueryBehaviour[K, N, M](self, &cfg.Query)
 	if err != nil {
 		return nil, fmt.Errorf("query behaviour: %w", err)
 	}
 
-	routingBehaviour, err := NewRoutingBehaviour(self, rt, &cfg.Routing)
+	routingBehaviour, err := NewRoutingBehaviour[K, N](self, rt, cplFn, &cfg.Routing)
 	if err != nil {
 		return nil, fmt.Errorf("routing behaviour: %w", err)
 	}
 
-	networkBehaviour, err := NewNetworkBehaviour(rtr, &cfg.Network)
+	networkBehaviour, err := NewNetworkBehaviour[K, N, M](rtr, &cfg.Network)
 	if err != nil {
 		return nil, fmt.Errorf("network behaviour: %w", err)
 	}
@@ -233,19 +236,19 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 	bpCfg := brdcst.DefaultConfigPool()
 	bpCfg.Tracer = tele.Tracer
 
-	b, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, bpCfg)
+	b, err := brdcst.NewPool[K, N, M](self, bpCfg)
 	if err != nil {
 		return nil, fmt.Errorf("broadcast: %w", err)
 	}
 
-	brdcstBehaviour, err := NewPooledBroadcastBehaviour(b, &cfg.Brdcst)
+	brdcstBehaviour, err := NewPooledBroadcastBehaviour[K, N, M](b, &cfg.Brdcst)
 	if err != nil {
 		return nil, fmt.Errorf("broadcast behaviour: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	d := &Coordinator{
+	d := &Coordinator[K, N, M]{
 		self:   self,
 		tele:   tele,
 		cfg:    *cfg,
@@ -268,7 +271,7 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 }
 
 // Close cleans up all resources associated with this Coordinator.
-func (c *Coordinator) Close() error {
+func (c *Coordinator[K, N, M]) Close() error {
 	c.cancel()
 	<-c.done
 
@@ -278,11 +281,11 @@ func (c *Coordinator) Close() error {
 	return nil
 }
 
-func (c *Coordinator) ID() kadt.PeerID {
+func (c *Coordinator[K, N, M]) ID() N {
 	return c.self
 }
 
-func (c *Coordinator) eventLoop(ctx context.Context) {
+func (c *Coordinator[K, N, M]) eventLoop(ctx context.Context) {
 	defer close(c.done)
 
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.eventLoop")
@@ -318,7 +321,7 @@ func (c *Coordinator) eventLoop(ctx context.Context) {
 	}
 }
 
-func (c *Coordinator) dispatchEvent(ctx context.Context, ev BehaviourEvent) {
+func (c *Coordinator[K, N, M]) dispatchEvent(ctx context.Context, ev BehaviourEvent) {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.dispatchEvent", trace.WithAttributes(attribute.String("event_type", fmt.Sprintf("%T", ev))))
 	defer span.End()
 
@@ -341,21 +344,21 @@ func (c *Coordinator) dispatchEvent(ctx context.Context, ev BehaviourEvent) {
 	}
 }
 
-func (c *Coordinator) SetRoutingNotifier(rn RoutingNotifier) {
+func (c *Coordinator[K, N, M]) SetRoutingNotifier(rn RoutingNotifier) {
 	c.routingNotifierMu.Lock()
 	c.routingNotifier = rn
 	c.routingNotifierMu.Unlock()
 }
 
 // IsRoutable reports whether the supplied node is present in the local routing table.
-func (c *Coordinator) IsRoutable(ctx context.Context, id kadt.PeerID) bool {
+func (c *Coordinator[K, N, M]) IsRoutable(ctx context.Context, id N) bool {
 	_, exists := c.rt.GetNode(id.Key())
 
 	return exists
 }
 
 // GetClosestNodes requests the n closest nodes to the key from the node's local routing table.
-func (c *Coordinator) GetClosestNodes(ctx context.Context, k kadt.Key, n int) ([]kadt.PeerID, error) {
+func (c *Coordinator[K, N, M]) GetClosestNodes(ctx context.Context, k K, n int) ([]N, error) {
 	return c.rt.NearestNodes(k, n), nil
 }
 
@@ -370,10 +373,10 @@ func (c *Coordinator) GetClosestNodes(ctx context.Context, k kadt.Key, n int) ([
 // numResults specifies the minimum number of nodes to successfully contact before considering iteration complete.
 // The query is considered to be exhausted when it has received responses from at least this number of nodes
 // and there are no closer nodes remaining to be contacted. A default of 20 is used if this value is less than 1.
-func (c *Coordinator) QueryClosest(ctx context.Context, target kadt.Key, fn coordt.QueryFunc[kadt.Key, kadt.PeerID, *pb.Message], numResults int) ([]kadt.PeerID, coordt.QueryStats, error) {
+func (c *Coordinator[K, N, M]) QueryClosest(ctx context.Context, target K, fn coordt.QueryFunc[K, N, M], numResults int) ([]N, coordt.QueryStats, error) {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.Query")
 	defer span.End()
-	c.cfg.Logger.Debug("starting query for closest nodes", tele.LogAttrKey(target))
+	c.cfg.Logger.Debug("starting query for closest nodes", logAttrKey(target))
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -383,10 +386,10 @@ func (c *Coordinator) QueryClosest(ctx context.Context, target kadt.Key, fn coor
 		return nil, coordt.QueryStats{}, err
 	}
 
-	waiter := NewQueryWaiter(numResults)
+	waiter := NewQueryWaiter[K, N, M](numResults)
 	queryID := c.newOperationID()
 
-	cmd := &EventStartFindCloserQuery{
+	cmd := &EventStartFindCloserQuery[K, N, M]{
 		QueryID:           queryID,
 		Target:            target,
 		KnownClosestNodes: seedIDs,
@@ -411,13 +414,13 @@ func (c *Coordinator) QueryClosest(ctx context.Context, target kadt.Key, fn coor
 // numResults specifies the minimum number of nodes to successfully contact before considering iteration complete.
 // The query is considered to be exhausted when it has received responses from at least this number of nodes
 // and there are no closer nodes remaining to be contacted. A default of 20 is used if this value is less than 1.
-func (c *Coordinator) QueryMessage(ctx context.Context, msg *pb.Message, fn coordt.QueryFunc[kadt.Key, kadt.PeerID, *pb.Message], numResults int) ([]kadt.PeerID, coordt.QueryStats, error) {
+func (c *Coordinator[K, N, M]) QueryMessage(ctx context.Context, msg M, fn coordt.QueryFunc[K, N, M], numResults int) ([]N, coordt.QueryStats, error) {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.QueryMessage")
 	defer span.End()
-	if msg == nil {
+	if any(msg) == nil {
 		return nil, coordt.QueryStats{}, fmt.Errorf("no message supplied for query")
 	}
-	c.cfg.Logger.Debug("starting query with message", tele.LogAttrKey(msg.Target()), slog.String("type", msg.Type.String()))
+	c.cfg.Logger.Debug("starting query with message", logAttrKey(msg.Target()))
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -431,10 +434,10 @@ func (c *Coordinator) QueryMessage(ctx context.Context, msg *pb.Message, fn coor
 		return nil, coordt.QueryStats{}, err
 	}
 
-	waiter := NewQueryWaiter(numResults)
+	waiter := NewQueryWaiter[K, N, M](numResults)
 	queryID := c.newOperationID()
 
-	cmd := &EventStartMessageQuery{
+	cmd := &EventStartMessageQuery[K, N, M]{
 		QueryID:           queryID,
 		Target:            msg.Target(),
 		Message:           msg,
@@ -450,13 +453,13 @@ func (c *Coordinator) QueryMessage(ctx context.Context, msg *pb.Message, fn coor
 	return closest, stats, err
 }
 
-func (c *Coordinator) BroadcastRecord(ctx context.Context, msg *pb.Message) error {
+func (c *Coordinator[K, N, M]) BroadcastRecord(ctx context.Context, msg M) error {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.BroadcastRecord")
 	defer span.End()
-	if msg == nil {
+	if any(msg) == nil {
 		return fmt.Errorf("no message supplied for broadcast")
 	}
-	c.cfg.Logger.Debug("starting broadcast with message", tele.LogAttrKey(msg.Target()), slog.String("type", msg.Type.String()))
+	c.cfg.Logger.Debug("starting broadcast with message", logAttrKey(msg.Target()))
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -468,23 +471,23 @@ func (c *Coordinator) BroadcastRecord(ctx context.Context, msg *pb.Message) erro
 	return c.broadcast(ctx, msg, seeds, brdcst.DefaultConfigFollowUp())
 }
 
-func (c *Coordinator) BroadcastStatic(ctx context.Context, msg *pb.Message, seeds []kadt.PeerID) error {
+func (c *Coordinator[K, N, M]) BroadcastStatic(ctx context.Context, msg M, seeds []N) error {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.BroadcastStatic")
 	defer span.End()
 	return c.broadcast(ctx, msg, seeds, brdcst.DefaultConfigStatic())
 }
 
-func (c *Coordinator) broadcast(ctx context.Context, msg *pb.Message, seeds []kadt.PeerID, cfg brdcst.Config) error {
+func (c *Coordinator[K, N, M]) broadcast(ctx context.Context, msg M, seeds []N, cfg brdcst.Config) error {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.broadcast")
 	defer span.End()
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	waiter := NewBroadcastWaiter(0) // zero capacity since waitForBroadcast ignores progress events
+	waiter := NewBroadcastWaiter[K, N, M](0) // zero capacity since waitForBroadcast ignores progress events
 	queryID := c.newOperationID()
 
-	cmd := &EventStartBroadcast{
+	cmd := &EventStartBroadcast[K, N, M]{
 		QueryID: queryID,
 		Target:  msg.Target(),
 		Message: msg,
@@ -502,7 +505,7 @@ func (c *Coordinator) broadcast(ctx context.Context, msg *pb.Message, seeds []ka
 	}
 
 	if len(contacted) == 0 {
-		return fmt.Errorf("no peers contacted")
+		return fmt.Errorf("no nodes contacted")
 	}
 
 	// TODO: define threshold below which we consider the provide to have failed
@@ -510,7 +513,7 @@ func (c *Coordinator) broadcast(ctx context.Context, msg *pb.Message, seeds []ka
 	return nil
 }
 
-func (c *Coordinator) waitForQuery(ctx context.Context, queryID coordt.QueryID, waiter *QueryWaiter, fn coordt.QueryFunc[kadt.Key, kadt.PeerID, *pb.Message]) ([]kadt.PeerID, coordt.QueryStats, error) {
+func (c *Coordinator[K, N, M]) waitForQuery(ctx context.Context, queryID coordt.QueryID, waiter *QueryWaiter[K, N, M], fn coordt.QueryFunc[K, N, M]) ([]N, coordt.QueryStats, error) {
 	var lastStats coordt.QueryStats
 
 	// progressed is set to nil once the notifier closes the progress channel, which it
@@ -530,7 +533,7 @@ func (c *Coordinator) waitForQuery(ctx context.Context, queryID coordt.QueryID, 
 				continue
 			}
 			ctx, ev := wev.Ctx, wev.Event
-			c.cfg.Logger.Debug("query made progress", "query_id", queryID, tele.LogAttrPeerID(ev.NodeID), slog.Duration("elapsed", c.cfg.Clock.Since(ev.Stats.Start)), slog.Int("requests", ev.Stats.Requests), slog.Int("failures", ev.Stats.Failure))
+			c.cfg.Logger.Debug("query made progress", "query_id", queryID, logAttrNodeID(ev.NodeID), slog.Duration("elapsed", c.cfg.Clock.Since(ev.Stats.Start)), slog.Int("requests", ev.Stats.Requests), slog.Int("failures", ev.Stats.Failure))
 			lastStats = coordt.QueryStats{
 				Start:    ev.Stats.Start,
 				Requests: ev.Stats.Requests,
@@ -553,7 +556,7 @@ func (c *Coordinator) waitForQuery(ctx context.Context, queryID coordt.QueryID, 
 			// drain the progress notification channel
 			for pev := range waiter.Progressed() {
 				ctx, ev := pev.Ctx, pev.Event
-				c.cfg.Logger.Debug("query made progress", "query_id", queryID, tele.LogAttrPeerID(ev.NodeID), slog.Duration("elapsed", c.cfg.Clock.Since(ev.Stats.Start)), slog.Int("requests", ev.Stats.Requests), slog.Int("failures", ev.Stats.Failure))
+				c.cfg.Logger.Debug("query made progress", "query_id", queryID, logAttrNodeID(ev.NodeID), slog.Duration("elapsed", c.cfg.Clock.Since(ev.Stats.Start)), slog.Int("requests", ev.Stats.Requests), slog.Int("failures", ev.Stats.Failure))
 				lastStats = coordt.QueryStats{
 					Start:    ev.Stats.Start,
 					Requests: ev.Stats.Requests,
@@ -590,8 +593,8 @@ func (c *Coordinator) waitForQuery(ctx context.Context, queryID coordt.QueryID, 
 	}
 }
 
-func (c *Coordinator) waitForBroadcast(ctx context.Context, waiter *BroadcastWaiter) ([]kadt.PeerID, map[string]struct {
-	Node kadt.PeerID
+func (c *Coordinator[K, N, M]) waitForBroadcast(ctx context.Context, waiter *BroadcastWaiter[K, N, M]) ([]N, map[string]struct {
+	Node N
 	Err  error
 }, error,
 ) {
@@ -614,16 +617,16 @@ func (c *Coordinator) waitForBroadcast(ctx context.Context, waiter *BroadcastWai
 // AddNodes suggests new DHT nodes to be added to the routing table.
 // If the routing table is updated as a result of this operation an EventRoutingUpdated notification
 // is emitted on the routing notification channel.
-func (c *Coordinator) AddNodes(ctx context.Context, ids []kadt.PeerID) error {
+func (c *Coordinator[K, N, M]) AddNodes(ctx context.Context, ids []N) error {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.AddNodes")
 	defer span.End()
 	for _, id := range ids {
-		if id.Equal(c.self) {
+		if id.String() == c.self.String() {
 			// skip self
 			continue
 		}
 
-		c.routingBehaviour.Notify(ctx, &EventAddNode{
+		c.routingBehaviour.Notify(ctx, &EventAddNode[K, N]{
 			NodeID: id,
 		})
 
@@ -632,63 +635,63 @@ func (c *Coordinator) AddNodes(ctx context.Context, ids []kadt.PeerID) error {
 	return nil
 }
 
-// Bootstrap instructs the dht to begin bootstrapping the routing table from the peers
+// Bootstrap instructs the dht to begin bootstrapping the routing table from the nodes
 // configured as [RoutingConfig.BootstrapPeers]. A bootstrap also starts automatically
 // whenever the routing table holds fewer than
 // [RoutingConfig.BootstrapMinimumPopulation] nodes.
-func (c *Coordinator) Bootstrap(ctx context.Context) error {
+func (c *Coordinator[K, N, M]) Bootstrap(ctx context.Context) error {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.Bootstrap")
 	defer span.End()
 
-	c.routingBehaviour.Notify(ctx, &EventStartBootstrap{})
+	c.routingBehaviour.Notify(ctx, &EventStartBootstrap[K, N]{})
 
 	return nil
 }
 
-// NotifyConnectivity notifies the coordinator that a peer has passed a connectivity check
+// NotifyConnectivity notifies the coordinator that a node has passed a connectivity check
 // which means it is connected and supports finding closer nodes
-func (c *Coordinator) NotifyConnectivity(ctx context.Context, id kadt.PeerID) {
+func (c *Coordinator[K, N, M]) NotifyConnectivity(ctx context.Context, id N) {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.NotifyConnectivity")
 	defer span.End()
 
-	c.cfg.Logger.Debug("peer has connectivity", tele.LogAttrPeerID(id), "source", "notify")
-	c.routingBehaviour.Notify(ctx, &EventNotifyConnectivity{
+	c.cfg.Logger.Debug("node has connectivity", logAttrNodeID(id), "source", "notify")
+	c.routingBehaviour.Notify(ctx, &EventNotifyConnectivity[K, N]{
 		NodeID: id,
 	})
 }
 
-// NotifyNonConnectivity notifies the coordinator that a peer has failed a connectivity check
+// NotifyNonConnectivity notifies the coordinator that a node has failed a connectivity check
 // which means it is not connected and/or it doesn't support finding closer nodes
-func (c *Coordinator) NotifyNonConnectivity(ctx context.Context, id kadt.PeerID) {
+func (c *Coordinator[K, N, M]) NotifyNonConnectivity(ctx context.Context, id N) {
 	ctx, span := c.tele.Tracer.Start(ctx, "Coordinator.NotifyNonConnectivity")
 	defer span.End()
 
-	c.cfg.Logger.Debug("peer has no connectivity", tele.LogAttrPeerID(id), "source", "notify")
-	c.routingBehaviour.Notify(ctx, &EventNotifyNonConnectivity{
+	c.cfg.Logger.Debug("node has no connectivity", logAttrNodeID(id), "source", "notify")
+	c.routingBehaviour.Notify(ctx, &EventNotifyNonConnectivity[K, N]{
 		NodeID: id,
 	})
 }
 
-func (c *Coordinator) newOperationID() coordt.QueryID {
+func (c *Coordinator[K, N, M]) newOperationID() coordt.QueryID {
 	next := c.lastQueryID.Add(1)
 	return coordt.QueryID(fmt.Sprintf("%016x", next))
 }
 
 // A BufferedRoutingNotifier is a [RoutingNotifier] that buffers [RoutingNotification] events and provides methods
 // to expect occurrences of specific events. It is designed for use in a test environment.
-type BufferedRoutingNotifier struct {
+type BufferedRoutingNotifier[K kad.Key[K], N kad.NodeID[K]] struct {
 	mu       sync.Mutex
 	buffered []RoutingNotification
 	signal   chan struct{}
 }
 
-func NewBufferedRoutingNotifier() *BufferedRoutingNotifier {
-	return &BufferedRoutingNotifier{
+func NewBufferedRoutingNotifier[K kad.Key[K], N kad.NodeID[K]]() *BufferedRoutingNotifier[K, N] {
+	return &BufferedRoutingNotifier[K, N]{
 		signal: make(chan struct{}, 1),
 	}
 }
 
-func (w *BufferedRoutingNotifier) Notify(ctx context.Context, ev RoutingNotification) {
+func (w *BufferedRoutingNotifier[K, N]) Notify(ctx context.Context, ev RoutingNotification) {
 	w.mu.Lock()
 	w.buffered = append(w.buffered, ev)
 	select {
@@ -698,7 +701,7 @@ func (w *BufferedRoutingNotifier) Notify(ctx context.Context, ev RoutingNotifica
 	w.mu.Unlock()
 }
 
-func (w *BufferedRoutingNotifier) Expect(ctx context.Context, expected RoutingNotification) (RoutingNotification, error) {
+func (w *BufferedRoutingNotifier[K, N]) Expect(ctx context.Context, expected RoutingNotification) (RoutingNotification, error) {
 	for {
 		// look in buffered events
 		w.mu.Lock()
@@ -721,14 +724,14 @@ func (w *BufferedRoutingNotifier) Expect(ctx context.Context, expected RoutingNo
 	}
 }
 
-// ExpectRoutingUpdated blocks until an [EventRoutingUpdated] event is seen for the specified peer id
-func (w *BufferedRoutingNotifier) ExpectRoutingUpdated(ctx context.Context, id kadt.PeerID) (*EventRoutingUpdated, error) {
+// ExpectRoutingUpdated blocks until an [EventRoutingUpdated] event is seen for the specified node id
+func (w *BufferedRoutingNotifier[K, N]) ExpectRoutingUpdated(ctx context.Context, id N) (*EventRoutingUpdated[K, N], error) {
 	for {
 		// look in buffered events
 		w.mu.Lock()
 		for i, ev := range w.buffered {
-			if tev, ok := ev.(*EventRoutingUpdated); ok {
-				if id.Equal(tev.NodeID) {
+			if tev, ok := ev.(*EventRoutingUpdated[K, N]); ok {
+				if id.String() == tev.NodeID.String() {
 					// remove first from buffer and return it
 					w.buffered = w.buffered[:i+copy(w.buffered[i:], w.buffered[i+1:])]
 					w.mu.Unlock()
@@ -747,14 +750,14 @@ func (w *BufferedRoutingNotifier) ExpectRoutingUpdated(ctx context.Context, id k
 	}
 }
 
-// ExpectRoutingRemoved blocks until an [EventRoutingRemoved] event is seen for the specified peer id
-func (w *BufferedRoutingNotifier) ExpectRoutingRemoved(ctx context.Context, id kadt.PeerID) (*EventRoutingRemoved, error) {
+// ExpectRoutingRemoved blocks until an [EventRoutingRemoved] event is seen for the specified node id
+func (w *BufferedRoutingNotifier[K, N]) ExpectRoutingRemoved(ctx context.Context, id N) (*EventRoutingRemoved[K, N], error) {
 	for {
 		// look in buffered events
 		w.mu.Lock()
 		for i, ev := range w.buffered {
-			if tev, ok := ev.(*EventRoutingRemoved); ok {
-				if id.Equal(tev.NodeID) {
+			if tev, ok := ev.(*EventRoutingRemoved[K, N]); ok {
+				if id.String() == tev.NodeID.String() {
 					// remove first from buffer and return it
 					w.buffered = w.buffered[:i+copy(w.buffered[i:], w.buffered[i+1:])]
 					w.mu.Unlock()
@@ -778,33 +781,31 @@ type nullRoutingNotifier struct{}
 func (nullRoutingNotifier) Notify(context.Context, RoutingNotification) {}
 
 // A QueryWaiter implements [QueryMonitor] for general queries
-type QueryWaiter struct {
-	progressed chan CtxEvent[*EventQueryProgressed]
-	finished   chan CtxEvent[*EventQueryFinished]
+type QueryWaiter[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
+	progressed chan CtxEvent[*EventQueryProgressed[K, N, M]]
+	finished   chan CtxEvent[*EventQueryFinished[K, N]]
 }
 
-var _ QueryMonitor[*EventQueryFinished] = (*QueryWaiter)(nil)
-
-func NewQueryWaiter(n int) *QueryWaiter {
-	w := &QueryWaiter{
-		progressed: make(chan CtxEvent[*EventQueryProgressed], n),
-		finished:   make(chan CtxEvent[*EventQueryFinished], 1),
+func NewQueryWaiter[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](n int) *QueryWaiter[K, N, M] {
+	w := &QueryWaiter[K, N, M]{
+		progressed: make(chan CtxEvent[*EventQueryProgressed[K, N, M]], n),
+		finished:   make(chan CtxEvent[*EventQueryFinished[K, N]], 1),
 	}
 	return w
 }
 
-func (w *QueryWaiter) Progressed() <-chan CtxEvent[*EventQueryProgressed] {
+func (w *QueryWaiter[K, N, M]) Progressed() <-chan CtxEvent[*EventQueryProgressed[K, N, M]] {
 	return w.progressed
 }
 
-func (w *QueryWaiter) Finished() <-chan CtxEvent[*EventQueryFinished] {
+func (w *QueryWaiter[K, N, M]) Finished() <-chan CtxEvent[*EventQueryFinished[K, N]] {
 	return w.finished
 }
 
-func (w *QueryWaiter) NotifyProgressed() chan<- CtxEvent[*EventQueryProgressed] {
+func (w *QueryWaiter[K, N, M]) NotifyProgressed() chan<- CtxEvent[*EventQueryProgressed[K, N, M]] {
 	return w.progressed
 }
 
-func (w *QueryWaiter) NotifyFinished() chan<- CtxEvent[*EventQueryFinished] {
+func (w *QueryWaiter[K, N, M]) NotifyFinished() chan<- CtxEvent[*EventQueryFinished[K, N]] {
 	return w.finished
 }

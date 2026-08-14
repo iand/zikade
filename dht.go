@@ -17,10 +17,15 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 
 	"github.com/probe-lab/zikade/internal/coord"
+	"github.com/probe-lab/zikade/internal/coord/cplutil"
 	"github.com/probe-lab/zikade/internal/coord/routing"
 	"github.com/probe-lab/zikade/kadt"
+	"github.com/probe-lab/zikade/pb"
 	"github.com/probe-lab/zikade/tele"
 )
+
+// aminoCoordinator is the neutral coordinator instantiated for the Amino wire types.
+type aminoCoordinator = coord.Coordinator[kadt.Key, kadt.PeerID, *pb.Message]
 
 // DHT is an implementation of Kademlia with S/Kademlia modifications.
 // It is used to implement the base Routing module.
@@ -38,7 +43,7 @@ type DHT struct {
 	mode   mode
 
 	// kad is a reference to the coordinator
-	kad *coord.Coordinator
+	kad *aminoCoordinator
 
 	// rt holds a reference to the routing table implementation. This can be
 	// configured via the Config struct.
@@ -111,7 +116,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 	}
 
 	// instantiate a new Kademlia DHT coordinator.
-	coordCfg := coord.DefaultCoordinatorConfig()
+	coordCfg := coord.DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 	coordCfg.Clock = cfg.Clock
 	coordCfg.Logger = cfg.Logger
 	coordCfg.MeterProvider = cfg.MeterProvider
@@ -131,6 +136,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 
 	coordCfg.Brdcst.Clock = cfg.Clock
 	coordCfg.Brdcst.Logger = cfg.Logger.With("behaviour", "pooledbroadcast")
+	coordCfg.Brdcst.VerifyResponse = verifyStoredRecord
 
 	coordCfg.Network.Logger = cfg.Logger.With("behaviour", "network")
 
@@ -141,7 +147,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		timeout:    cfg.TimeoutStreamRequest,
 		clk:        cfg.Clock,
 	}
-	d.kad, err = coord.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, coordCfg)
+	d.kad, err = coord.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, cplutil.GenRandPeerID, coordCfg)
 	if err != nil {
 		return nil, fmt.Errorf("new coordinator: %w", err)
 	}

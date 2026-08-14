@@ -14,6 +14,7 @@ import (
 	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore/failstore"
+	recpb "github.com/libp2p/go-libp2p-record/pb"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/probe-lab/zikade/internal/kadtest"
 	"github.com/probe-lab/zikade/kadt"
+	"github.com/probe-lab/zikade/pb"
 )
 
 // newRandomContent reads 1024 bytes from crypto/rand and builds a content struct.
@@ -949,4 +951,66 @@ func TestDHT_Bootstrap_from_configured_peers(t *testing.T) {
 		_, found = d3.rt.GetNode(kadt.PeerID(d1.host.ID()).Key())
 		require.True(t, found)
 	})
+}
+
+func TestVerifyStoredRecord(t *testing.T) {
+	value := []byte("stored value")
+
+	putValue := func(v []byte) *pb.Message {
+		return &pb.Message{
+			Type:   pb.Message_PUT_VALUE,
+			Key:    []byte("/pk/key"),
+			Record: &recpb.Record{Key: []byte("/pk/key"), Value: v},
+		}
+	}
+
+	testCases := []struct {
+		name    string
+		req     *pb.Message
+		resp    *pb.Message
+		wantErr bool
+	}{
+		{
+			name:    "echoed record matches",
+			req:     putValue(value),
+			resp:    putValue(value),
+			wantErr: false,
+		},
+		{
+			name:    "echoed record differs",
+			req:     putValue(value),
+			resp:    putValue([]byte("something else")),
+			wantErr: true,
+		},
+		{
+			name:    "no response to put",
+			req:     putValue(value),
+			resp:    nil,
+			wantErr: true,
+		},
+		{
+			name:    "echoed record absent",
+			req:     putValue(value),
+			resp:    &pb.Message{Type: pb.Message_PUT_VALUE},
+			wantErr: true,
+		},
+		{
+			name:    "add provider without response",
+			req:     &pb.Message{Type: pb.Message_ADD_PROVIDER, Key: []byte("key")},
+			resp:    nil,
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verifyStoredRecord(tc.req, tc.resp)
+			if tc.wantErr && err == nil {
+				t.Errorf("got nil error, want an error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("got error %v, want nil", err)
+			}
+		})
+	}
 }

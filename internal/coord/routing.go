@@ -13,12 +13,11 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/ipfs/go-libdht/kad"
+
 	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
-	"github.com/probe-lab/zikade/internal/coord/cplutil"
 	"github.com/probe-lab/zikade/internal/coord/routing"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/tele"
 )
 
 const (
@@ -31,7 +30,7 @@ const (
 	ProbeQueryID = coordt.QueryID("probe")
 )
 
-type RoutingConfig struct {
+type RoutingConfig[K kad.Key[K], N kad.NodeID[K]] struct {
 	// Clock is a clock that may replaced by a mock when testing
 	Clock clock.Clock
 
@@ -60,7 +59,7 @@ type RoutingConfig struct {
 	BootstrapRequestTimeout time.Duration
 
 	// BootstrapPeers is the list of nodes used to bootstrap the routing table.
-	BootstrapPeers []kadt.PeerID
+	BootstrapPeers []N
 
 	// BootstrapMinimumPopulation is the routing table population below which the behaviour should
 	// start a bootstrap automatically. Zero means a bootstrap is only ever started on request.
@@ -118,7 +117,7 @@ type RoutingConfig struct {
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
-func (cfg *RoutingConfig) Validate() error {
+func (cfg *RoutingConfig[K, N]) Validate() error {
 	if cfg.Clock == nil {
 		return &errs.ConfigurationError{
 			Component: "RoutingConfig",
@@ -252,7 +251,8 @@ func (cfg *RoutingConfig) Validate() error {
 		}
 	}
 
-	// This limit exists because we can only generate 15 bit prefixes [cplutil.GenRandPeerID].
+	// Exploring a cpl needs a node id that occupies that bucket, and the supplied
+	// [routing.NodeIDForCplFunc] is not required to synthesise one beyond a 15 bit prefix.
 	if cfg.ExploreMaximumCpl > 15 {
 		return &errs.ConfigurationError{
 			Component: "RoutingConfig",
@@ -291,12 +291,12 @@ func (cfg *RoutingConfig) Validate() error {
 	return nil
 }
 
-func DefaultRoutingConfig() *RoutingConfig {
-	return &RoutingConfig{
+func DefaultRoutingConfig[K kad.Key[K], N kad.NodeID[K]]() *RoutingConfig[K, N] {
+	return &RoutingConfig[K, N]{
 		Clock:  clock.New(),
-		Logger: tele.DefaultLogger("coord"),
-		Tracer: tele.NoopTracer(),
-		Meter:  tele.NoopMeter(),
+		Logger: slog.Default(),
+		Tracer: coordt.NoopTracer(),
+		Meter:  coordt.NoopMeter(),
 
 		QueueCapacity: 1024, // MAGIC
 
@@ -326,12 +326,12 @@ func DefaultRoutingConfig() *RoutingConfig {
 }
 
 // A RoutingBehaviour provides the behaviours for bootstrapping and maintaining a DHT's routing table.
-type RoutingBehaviour struct {
-	// self is the peer id of the system the dht is running on
-	self kadt.PeerID
+type RoutingBehaviour[K kad.Key[K], N kad.NodeID[K]] struct {
+	// self is the node id of the system the dht is running on
+	self N
 
 	// cfg is a copy of the optional configuration supplied to the behaviour
-	cfg RoutingConfig
+	cfg RoutingConfig[K, N]
 
 	// performMu is held while Perform is executing to ensure sequential execution of work.
 	performMu sync.Mutex
@@ -385,9 +385,9 @@ type RoutingBehaviour struct {
 	readyTimer *readyTimer
 }
 
-func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, kadt.PeerID], cfg *RoutingConfig) (*RoutingBehaviour, error) {
+func NewRoutingBehaviour[K kad.Key[K], N kad.NodeID[K]](self N, rt routing.RoutingTableCpl[K, N], cplFn routing.NodeIDForCplFunc[K, N], cfg *RoutingConfig[K, N]) (*RoutingBehaviour[K, N], error) {
 	if cfg == nil {
-		cfg = DefaultRoutingConfig()
+		cfg = DefaultRoutingConfig[K, N]()
 	} else if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -401,7 +401,7 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 	bootstrapCfg.MinimumPopulation = cfg.BootstrapMinimumPopulation
 	bootstrapCfg.RetryInterval = cfg.BootstrapRetryInterval
 
-	bootstrap, err := routing.NewBootstrap[kadt.Key](self, rt, cfg.BootstrapPeers, bootstrapCfg)
+	bootstrap, err := routing.NewBootstrap[K](self, rt, cfg.BootstrapPeers, bootstrapCfg)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
@@ -413,7 +413,7 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 	includeCfg.QueueCapacity = cfg.IncludeQueueCapacity
 	includeCfg.Concurrency = cfg.IncludeRequestConcurrency
 
-	include, err := routing.NewInclude[kadt.Key, kadt.PeerID](rt, includeCfg)
+	include, err := routing.NewInclude[K, N](rt, includeCfg)
 	if err != nil {
 		return nil, fmt.Errorf("include: %w", err)
 	}
@@ -425,7 +425,7 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 	probeCfg.Concurrency = cfg.ProbeRequestConcurrency
 	probeCfg.CheckInterval = cfg.ProbeCheckInterval
 
-	probe, err := routing.NewProbe[kadt.Key](rt, probeCfg)
+	probe, err := routing.NewProbe[K](rt, probeCfg)
 	if err != nil {
 		return nil, fmt.Errorf("probe: %w", err)
 	}
@@ -442,7 +442,7 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 		return nil, fmt.Errorf("explore schedule: %w", err)
 	}
 
-	explore, err := routing.NewExplore[kadt.Key](self, rt, cplutil.GenRandPeerID, schedule, exploreCfg)
+	explore, err := routing.NewExplore[K](self, rt, cplFn, schedule, exploreCfg)
 	if err != nil {
 		return nil, fmt.Errorf("explore: %w", err)
 	}
@@ -452,21 +452,21 @@ func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, 
 
 // ComposeRoutingBehaviour creates a [RoutingBehaviour] composed of the supplied state machines.
 // The state machines are assumed to pre-configured so any [RoutingConfig] values relating to the state machines will not be applied.
-func ComposeRoutingBehaviour(
-	self kadt.PeerID,
+func ComposeRoutingBehaviour[K kad.Key[K], N kad.NodeID[K]](
+	self N,
 	bootstrap coordt.StateMachine[routing.BootstrapEvent, routing.BootstrapState],
 	include coordt.StateMachine[routing.IncludeEvent, routing.IncludeState],
 	probe coordt.StateMachine[routing.ProbeEvent, routing.ProbeState],
 	explore coordt.StateMachine[routing.ExploreEvent, routing.ExploreState],
-	cfg *RoutingConfig,
-) (*RoutingBehaviour, error) {
+	cfg *RoutingConfig[K, N],
+) (*RoutingBehaviour[K, N], error) {
 	if cfg == nil {
-		cfg = DefaultRoutingConfig()
+		cfg = DefaultRoutingConfig[K, N]()
 	} else if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
-	r := &RoutingBehaviour{
+	r := &RoutingBehaviour[K, N]{
 		self:      self,
 		cfg:       *cfg,
 		bootstrap: bootstrap,
@@ -508,7 +508,7 @@ func ComposeRoutingBehaviour(
 	return r, nil
 }
 
-func (r *RoutingBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
+func (r *RoutingBehaviour[K, N]) Notify(ctx context.Context, ev BehaviourEvent) {
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.Notify")
 	defer span.End()
 
@@ -526,11 +526,11 @@ func (r *RoutingBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
 	}
 }
 
-func (r *RoutingBehaviour) Ready() <-chan struct{} {
+func (r *RoutingBehaviour[K, N]) Ready() <-chan struct{} {
 	return r.ready
 }
 
-func (r *RoutingBehaviour) Perform(ctx context.Context) (out BehaviourEvent, performed bool) {
+func (r *RoutingBehaviour[K, N]) Perform(ctx context.Context) (out BehaviourEvent, performed bool) {
 	r.performMu.Lock()
 	defer r.performMu.Unlock()
 
@@ -559,7 +559,7 @@ func (r *RoutingBehaviour) Perform(ctx context.Context) (out BehaviourEvent, per
 	return r.nextPendingOutbound()
 }
 
-func (r *RoutingBehaviour) nextPendingOutbound() (BehaviourEvent, bool) {
+func (r *RoutingBehaviour[K, N]) nextPendingOutbound() (BehaviourEvent, bool) {
 	if len(r.pendingOutbound) == 0 {
 		return nil, false
 	}
@@ -582,7 +582,7 @@ func (r *RoutingBehaviour) nextPendingOutbound() (BehaviourEvent, bool) {
 //
 // A behaviour with no work to do arms a timer for the earliest of its children's next
 // due times.
-func (r *RoutingBehaviour) updateReadyStatus(performed bool) {
+func (r *RoutingBehaviour[K, N]) updateReadyStatus(performed bool) {
 	if performed || r.pollAgain || len(r.pendingOutbound) != 0 {
 		signalReady(r.ready)
 		return
@@ -598,17 +598,17 @@ func (r *RoutingBehaviour) updateReadyStatus(performed bool) {
 
 // nextDue returns the earliest time at which advancing any child state machine could
 // make progress without an event arriving, or the zero time if there is no such time.
-func (r *RoutingBehaviour) nextDue() time.Time {
+func (r *RoutingBehaviour[K, N]) nextDue() time.Time {
 	due := earlier(r.bootstrapDue, r.includeDue)
 	due = earlier(due, r.probeDue)
 	return earlier(due, r.exploreDue)
 }
 
-func (r *RoutingBehaviour) nextPendingInbound() (CtxEvent[BehaviourEvent], bool) {
+func (r *RoutingBehaviour[K, N]) nextPendingInbound() (CtxEvent[BehaviourEvent], bool) {
 	return r.inbound.dequeue()
 }
 
-func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
+func (r *RoutingBehaviour[K, N]) perfomNextInbound() (BehaviourEvent, bool) {
 	pev, ok := r.nextPendingInbound()
 	if !ok {
 		return nil, false
@@ -621,45 +621,45 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 	defer span.End()
 
 	switch ev := pev.Event.(type) {
-	case *EventStartBootstrap:
+	case *EventStartBootstrap[K, N]:
 		span.SetAttributes(attribute.String("event", "EventStartBootstrap"))
-		cmd := &routing.EventBootstrapStart[kadt.Key, kadt.PeerID]{
+		cmd := &routing.EventBootstrapStart[K, N]{
 			KnownClosestNodes: ev.SeedNodes,
 		}
 		// attempt to advance the bootstrap
 		return r.advanceBootstrap(ctx, now, cmd)
 
-	case *EventAddNode:
+	case *EventAddNode[K, N]:
 		span.SetAttributes(attribute.String("event", "EventAddAddrInfo"))
 		// Ignore self
-		if r.self.Equal(ev.NodeID) {
+		if r.self.String() == ev.NodeID.String() {
 			break
 		}
-		cmd := &routing.EventIncludeAddCandidate[kadt.Key, kadt.PeerID]{
+		cmd := &routing.EventIncludeAddCandidate[K, N]{
 			NodeID: ev.NodeID,
 		}
 		// attempt to advance the include
 		return r.advanceInclude(ctx, now, cmd)
 
-	case *EventRoutingUpdated:
+	case *EventRoutingUpdated[K, N]:
 		span.SetAttributes(attribute.String("event", "EventRoutingUpdated"), attribute.String("nodeid", ev.NodeID.String()))
-		cmd := &routing.EventProbeAdd[kadt.Key, kadt.PeerID]{
+		cmd := &routing.EventProbeAdd[K, N]{
 			NodeID: ev.NodeID,
 		}
 		// attempt to advance the probe state machine
 		return r.advanceProbe(ctx, now, cmd)
 
-	case *EventGetCloserNodesSuccess:
+	case *EventGetCloserNodesSuccess[K, N]:
 		span.SetAttributes(attribute.String("event", "EventGetCloserNodesSuccess"), attribute.String("queryid", string(ev.QueryID)), attribute.String("nodeid", ev.To.String()))
 		switch ev.QueryID {
 		case routing.BootstrapQueryID:
 			for _, info := range ev.CloserNodes {
 				// TODO: do this after advancing bootstrap
-				r.pendingOutbound = append(r.pendingOutbound, &EventAddNode{
+				r.pendingOutbound = append(r.pendingOutbound, &EventAddNode[K, N]{
 					NodeID: info,
 				})
 			}
-			cmd := &routing.EventBootstrapFindCloserResponse[kadt.Key, kadt.PeerID]{
+			cmd := &routing.EventBootstrapFindCloserResponse[K, N]{
 				NodeID:      ev.To,
 				CloserNodes: ev.CloserNodes,
 			}
@@ -670,11 +670,11 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 			var cmd routing.IncludeEvent
 			// require that the node responded with at least one closer node
 			if len(ev.CloserNodes) > 0 {
-				cmd = &routing.EventIncludeConnectivityCheckSuccess[kadt.Key, kadt.PeerID]{
+				cmd = &routing.EventIncludeConnectivityCheckSuccess[K, N]{
 					NodeID: ev.To,
 				}
 			} else {
-				cmd = &routing.EventIncludeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
+				cmd = &routing.EventIncludeConnectivityCheckFailure[K, N]{
 					NodeID: ev.To,
 					Error:  fmt.Errorf("response did not include any closer nodes"),
 				}
@@ -686,11 +686,11 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 			var cmd routing.ProbeEvent
 			// require that the node responded with at least one closer node
 			if len(ev.CloserNodes) > 0 {
-				cmd = &routing.EventProbeConnectivityCheckSuccess[kadt.Key, kadt.PeerID]{
+				cmd = &routing.EventProbeConnectivityCheckSuccess[K, N]{
 					NodeID: ev.To,
 				}
 			} else {
-				cmd = &routing.EventProbeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
+				cmd = &routing.EventProbeConnectivityCheckFailure[K, N]{
 					NodeID: ev.To,
 					Error:  fmt.Errorf("response did not include any closer nodes"),
 				}
@@ -700,11 +700,11 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 
 		case routing.ExploreQueryID:
 			for _, info := range ev.CloserNodes {
-				r.pendingOutbound = append(r.pendingOutbound, &EventAddNode{
+				r.pendingOutbound = append(r.pendingOutbound, &EventAddNode[K, N]{
 					NodeID: info,
 				})
 			}
-			cmd := &routing.EventExploreFindCloserResponse[kadt.Key, kadt.PeerID]{
+			cmd := &routing.EventExploreFindCloserResponse[K, N]{
 				NodeID:      ev.To,
 				CloserNodes: ev.CloserNodes,
 			}
@@ -713,12 +713,12 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 		default:
 			panic(fmt.Sprintf("unexpected query id: %s", ev.QueryID))
 		}
-	case *EventGetCloserNodesFailure:
+	case *EventGetCloserNodesFailure[K, N]:
 		span.SetAttributes(attribute.String("event", "EventGetCloserNodesFailure"), attribute.String("queryid", string(ev.QueryID)), attribute.String("nodeid", ev.To.String()))
 		span.RecordError(ev.Err)
 		switch ev.QueryID {
 		case routing.BootstrapQueryID:
-			cmd := &routing.EventBootstrapFindCloserFailure[kadt.Key, kadt.PeerID]{
+			cmd := &routing.EventBootstrapFindCloserFailure[K, N]{
 				NodeID: ev.To,
 				Error:  ev.Err,
 			}
@@ -726,12 +726,12 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 			return r.advanceBootstrap(ctx, now, cmd)
 
 		case IncludeQueryID:
-			var cmd routing.IncludeEvent = &routing.EventIncludeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
+			var cmd routing.IncludeEvent = &routing.EventIncludeConnectivityCheckFailure[K, N]{
 				NodeID: ev.To,
 				Error:  ev.Err,
 			}
 			if errors.Is(ev.Err, ErrRequestDropped) {
-				cmd = &routing.EventIncludeConnectivityCheckDropped[kadt.Key, kadt.PeerID]{
+				cmd = &routing.EventIncludeConnectivityCheckDropped[K, N]{
 					NodeID: ev.To,
 				}
 			}
@@ -739,12 +739,12 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 			return r.advanceInclude(ctx, now, cmd)
 
 		case ProbeQueryID:
-			var cmd routing.ProbeEvent = &routing.EventProbeConnectivityCheckFailure[kadt.Key, kadt.PeerID]{
+			var cmd routing.ProbeEvent = &routing.EventProbeConnectivityCheckFailure[K, N]{
 				NodeID: ev.To,
 				Error:  ev.Err,
 			}
 			if errors.Is(ev.Err, ErrRequestDropped) {
-				cmd = &routing.EventProbeConnectivityCheckDropped[kadt.Key, kadt.PeerID]{
+				cmd = &routing.EventProbeConnectivityCheckDropped[K, N]{
 					NodeID: ev.To,
 				}
 			}
@@ -752,7 +752,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 			return r.advanceProbe(ctx, now, cmd)
 
 		case routing.ExploreQueryID:
-			cmd := &routing.EventExploreFindCloserFailure[kadt.Key, kadt.PeerID]{
+			cmd := &routing.EventExploreFindCloserFailure[K, N]{
 				NodeID: ev.To,
 				Error:  ev.Err,
 			}
@@ -762,16 +762,16 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 		default:
 			panic(fmt.Sprintf("unexpected query id: %s", ev.QueryID))
 		}
-	case *EventNotifyConnectivity:
+	case *EventNotifyConnectivity[K, N]:
 		span.SetAttributes(attribute.String("event", "EventNotifyConnectivity"), attribute.String("nodeid", ev.NodeID.String()))
 		// ignore self
-		if r.self.Equal(ev.NodeID) {
+		if r.self.String() == ev.NodeID.String() {
 			break
 		}
-		r.cfg.Logger.Debug("peer has connectivity", tele.LogAttrPeerID(ev.NodeID))
+		r.cfg.Logger.Debug("node has connectivity", logAttrNodeID(ev.NodeID))
 
-		// tell the include state machine in case this is a new peer that could be added to the routing table
-		cmd := &routing.EventIncludeAddCandidate[kadt.Key, kadt.PeerID]{
+		// tell the include state machine in case this is a new node that could be added to the routing table
+		cmd := &routing.EventIncludeAddCandidate[K, N]{
 			NodeID: ev.NodeID,
 		}
 		next, ok := r.advanceInclude(ctx, now, cmd)
@@ -780,15 +780,15 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 		}
 
 		// tell the probe state machine in case there is are connectivity checks that could satisfied
-		cmdProbe := &routing.EventProbeNotifyConnectivity[kadt.Key, kadt.PeerID]{
+		cmdProbe := &routing.EventProbeNotifyConnectivity[K, N]{
 			NodeID: ev.NodeID,
 		}
 		return r.advanceProbe(ctx, now, cmdProbe)
-	case *EventNotifyNonConnectivity:
+	case *EventNotifyNonConnectivity[K, N]:
 		span.SetAttributes(attribute.String("event", "EventNotifyConnectivity"), attribute.String("nodeid", ev.NodeID.String()))
 
 		// tell the probe state machine to remove the node from the routing table and probe list
-		cmdProbe := &routing.EventProbeRemove[kadt.Key, kadt.PeerID]{
+		cmdProbe := &routing.EventProbeRemove[K, N]{
 			NodeID: ev.NodeID,
 		}
 		return r.advanceProbe(ctx, now, cmdProbe)
@@ -803,7 +803,7 @@ func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {
 }
 
 // pollChildren must only be called while r.pendingMu is locked
-func (r *RoutingBehaviour) pollChildren(ctx context.Context) {
+func (r *RoutingBehaviour[K, N]) pollChildren(ctx context.Context) {
 	// every state machine advanced for this poll sees the same instant
 	now := r.cfg.Clock.Now()
 
@@ -830,14 +830,14 @@ func (r *RoutingBehaviour) pollChildren(ctx context.Context) {
 	}
 }
 
-func (r *RoutingBehaviour) advanceBootstrap(ctx context.Context, now time.Time, ev routing.BootstrapEvent) (BehaviourEvent, bool) {
+func (r *RoutingBehaviour[K, N]) advanceBootstrap(ctx context.Context, now time.Time, ev routing.BootstrapEvent) (BehaviourEvent, bool) {
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.advanceBootstrap")
 	defer span.End()
 	bstate := r.bootstrap.Advance(ctx, now, ev)
 	switch st := bstate.(type) {
 
-	case *routing.StateBootstrapFindCloser[kadt.Key, kadt.PeerID]:
-		return &EventOutboundGetCloserNodes{
+	case *routing.StateBootstrapFindCloser[K, N]:
+		return &EventOutboundGetCloserNodes[K, N]{
 			QueryID: routing.BootstrapQueryID,
 			To:      st.NodeID,
 			Target:  st.Target,
@@ -870,35 +870,35 @@ func (r *RoutingBehaviour) advanceBootstrap(ctx context.Context, now time.Time, 
 	return nil, false
 }
 
-func (r *RoutingBehaviour) advanceInclude(ctx context.Context, now time.Time, ev routing.IncludeEvent) (BehaviourEvent, bool) {
+func (r *RoutingBehaviour[K, N]) advanceInclude(ctx context.Context, now time.Time, ev routing.IncludeEvent) (BehaviourEvent, bool) {
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.advanceInclude")
 	defer span.End()
 
 	istate := r.include.Advance(ctx, now, ev)
 	switch st := istate.(type) {
-	case *routing.StateIncludeConnectivityCheck[kadt.Key, kadt.PeerID]:
+	case *routing.StateIncludeConnectivityCheck[K, N]:
 		span.SetAttributes(attribute.String("out_event", "EventOutboundGetCloserNodes"))
 		// include wants to send a find node message to a node
-		r.cfg.Logger.Debug("starting connectivity check", tele.LogAttrPeerID(st.NodeID), "source", "include")
-		return &EventOutboundGetCloserNodes{
+		r.cfg.Logger.Debug("starting connectivity check", logAttrNodeID(st.NodeID), "source", "include")
+		return &EventOutboundGetCloserNodes[K, N]{
 			QueryID: IncludeQueryID,
 			To:      st.NodeID,
 			Target:  st.NodeID.Key(),
 			Notify:  r,
 		}, true
 
-	case *routing.StateIncludeRoutingUpdated[kadt.Key, kadt.PeerID]:
+	case *routing.StateIncludeRoutingUpdated[K, N]:
 		// a node has been included in the routing table
 
 		// notify other routing state machines that there is a new node in the routing table
-		r.Notify(ctx, &EventRoutingUpdated{
+		r.Notify(ctx, &EventRoutingUpdated[K, N]{
 			NodeID: st.NodeID,
 		})
 
 		// return the event to notify outwards too
 		span.SetAttributes(attribute.String("out_event", "EventRoutingUpdated"))
-		r.cfg.Logger.Debug("peer added to routing table", tele.LogAttrPeerID(st.NodeID))
-		return &EventRoutingUpdated{
+		r.cfg.Logger.Debug("node added to routing table", logAttrNodeID(st.NodeID))
+		return &EventRoutingUpdated[K, N]{
 			NodeID: st.NodeID,
 		}, true
 	case *routing.StateIncludeWaitingAtCapacity:
@@ -920,31 +920,31 @@ func (r *RoutingBehaviour) advanceInclude(ctx context.Context, now time.Time, ev
 	return nil, false
 }
 
-func (r *RoutingBehaviour) advanceProbe(ctx context.Context, now time.Time, ev routing.ProbeEvent) (BehaviourEvent, bool) {
+func (r *RoutingBehaviour[K, N]) advanceProbe(ctx context.Context, now time.Time, ev routing.ProbeEvent) (BehaviourEvent, bool) {
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.advanceProbe")
 	defer span.End()
 	st := r.probe.Advance(ctx, now, ev)
 	switch st := st.(type) {
-	case *routing.StateProbeConnectivityCheck[kadt.Key, kadt.PeerID]:
+	case *routing.StateProbeConnectivityCheck[K, N]:
 		// include wants to send a find node message to a node
-		r.cfg.Logger.Debug("starting connectivity check", tele.LogAttrPeerID(st.NodeID), "source", "probe")
-		return &EventOutboundGetCloserNodes{
+		r.cfg.Logger.Debug("starting connectivity check", logAttrNodeID(st.NodeID), "source", "probe")
+		return &EventOutboundGetCloserNodes[K, N]{
 			QueryID: ProbeQueryID,
 			To:      st.NodeID,
 			Target:  st.NodeID.Key(),
 			Notify:  r,
 		}, true
-	case *routing.StateProbeNodeFailure[kadt.Key, kadt.PeerID]:
+	case *routing.StateProbeNodeFailure[K, N]:
 		// a node has failed a connectivity check and been removed from the routing table and the probe list
 
 		// emit an EventRoutingRemoved event to notify clients that the node has been removed
-		r.cfg.Logger.Debug("peer removed from routing table", tele.LogAttrPeerID(st.NodeID))
-		r.pendingOutbound = append(r.pendingOutbound, &EventRoutingRemoved{
+		r.cfg.Logger.Debug("node removed from routing table", logAttrNodeID(st.NodeID))
+		r.pendingOutbound = append(r.pendingOutbound, &EventRoutingRemoved[K, N]{
 			NodeID: st.NodeID,
 		})
 
 		// add the node to the inclusion list for a second chance
-		r.Notify(ctx, &EventAddNode{
+		r.Notify(ctx, &EventAddNode[K, N]{
 			NodeID: st.NodeID,
 		})
 
@@ -967,15 +967,15 @@ func (r *RoutingBehaviour) advanceProbe(ctx context.Context, now time.Time, ev r
 	return nil, false
 }
 
-func (r *RoutingBehaviour) advanceExplore(ctx context.Context, now time.Time, ev routing.ExploreEvent) (BehaviourEvent, bool) {
+func (r *RoutingBehaviour[K, N]) advanceExplore(ctx context.Context, now time.Time, ev routing.ExploreEvent) (BehaviourEvent, bool) {
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.advanceExplore")
 	defer span.End()
 	bstate := r.explore.Advance(ctx, now, ev)
 	switch st := bstate.(type) {
 
-	case *routing.StateExploreFindCloser[kadt.Key, kadt.PeerID]:
-		r.cfg.Logger.Debug("starting explore", slog.Int("cpl", st.Cpl), tele.LogAttrPeerID(st.NodeID))
-		return &EventOutboundGetCloserNodes{
+	case *routing.StateExploreFindCloser[K, N]:
+		r.cfg.Logger.Debug("starting explore", slog.Int("cpl", st.Cpl), logAttrNodeID(st.NodeID))
+		return &EventOutboundGetCloserNodes[K, N]{
 			QueryID: routing.ExploreQueryID,
 			To:      st.NodeID,
 			Target:  st.Target,
@@ -996,7 +996,7 @@ func (r *RoutingBehaviour) advanceExplore(ctx context.Context, now time.Time, ev
 	case *routing.StateExploreFailure:
 		// the failed cpl has been rescheduled, so the explore must be advanced again to
 		// report when the next cpl falls due
-		r.cfg.Logger.Warn("explore failure", slog.Int("cpl", st.Cpl), tele.LogAttrError(st.Error))
+		r.cfg.Logger.Warn("explore failure", slog.Int("cpl", st.Cpl), logAttrError(st.Error))
 		r.pollAgain = true
 	case *routing.StateExploreIdle:
 		// bootstrap not running, nothing to do

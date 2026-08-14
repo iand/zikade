@@ -84,7 +84,7 @@ func testPeers(t *testing.T, n int) []*nettest.Peer {
 
 // newTestQueryBehaviour returns a query behaviour that gives up on a query after
 // timeout and on an individual request after requestTimeout.
-func newTestQueryBehaviour(t *testing.T, clk clock.Clock, timeout, requestTimeout time.Duration, self kadt.PeerID) *QueryBehaviour {
+func newTestQueryBehaviour(t *testing.T, clk clock.Clock, timeout, requestTimeout time.Duration, self kadt.PeerID) *QueryBehaviour[kadt.Key, kadt.PeerID, *pb.Message] {
 	t.Helper()
 
 	cfg := DefaultQueryConfig()
@@ -92,22 +92,22 @@ func newTestQueryBehaviour(t *testing.T, clk clock.Clock, timeout, requestTimeou
 	cfg.Timeout = timeout
 	cfg.RequestTimeout = requestTimeout
 
-	b, err := NewQueryBehaviour(self, cfg)
+	b, err := NewQueryBehaviour[kadt.Key, kadt.PeerID, *pb.Message](self, cfg)
 	require.NoError(t, err)
 	return b
 }
 
 // newTestBroadcastBehaviour returns a broadcast behaviour holding an empty pool.
-func newTestBroadcastBehaviour(t *testing.T, clk clock.Clock, self kadt.PeerID) *PooledBroadcastBehaviour {
+func newTestBroadcastBehaviour(t *testing.T, clk clock.Clock, self kadt.PeerID) *PooledBroadcastBehaviour[kadt.Key, kadt.PeerID, *pb.Message] {
 	t.Helper()
 
 	pool, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, nil)
 	require.NoError(t, err)
 
-	bcfg := DefaultBroadcastConfig()
+	bcfg := DefaultBroadcastConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 	bcfg.Clock = clk
 
-	b, err := NewPooledBroadcastBehaviour(pool, bcfg)
+	b, err := NewPooledBroadcastBehaviour[kadt.Key, kadt.PeerID, *pb.Message](pool, bcfg)
 	require.NoError(t, err)
 
 	return b
@@ -120,7 +120,7 @@ func buildWaitingQueryBehaviour(timeout, requestTimeout time.Duration) func(t *t
 		nodes := testPeers(t, 2)
 
 		b := newTestQueryBehaviour(t, clk, timeout, requestTimeout, nodes[0].NodeID)
-		b.Notify(ctx, &EventStartFindCloserQuery{
+		b.Notify(ctx, &EventStartFindCloserQuery[kadt.Key, kadt.PeerID, *pb.Message]{
 			QueryID:           "test",
 			Target:            nodes[1].NodeID.Key(),
 			KnownClosestNodes: []kadt.PeerID{nodes[1].NodeID},
@@ -142,13 +142,13 @@ func buildWaitingBootstrapBehaviour(t *testing.T, ctx context.Context, clk clock
 	bootstrap, err := routing.NewBootstrap[kadt.Key](nodes[0].NodeID, nodes[0].RoutingTable, nil, bcfg)
 	require.NoError(t, err)
 
-	cfg := DefaultRoutingConfig()
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 	cfg.Clock = clk
 
-	b, err := ComposeRoutingBehaviour(nodes[0].NodeID, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
+	b, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](nodes[0].NodeID, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
-	b.Notify(ctx, &EventStartBootstrap{
+	b.Notify(ctx, &EventStartBootstrap[kadt.Key, kadt.PeerID]{
 		SeedNodes: []kadt.PeerID{nodes[1].NodeID},
 	})
 
@@ -166,13 +166,13 @@ func buildWaitingIncludeBehaviour(t *testing.T, ctx context.Context, clk clock.C
 	include, err := routing.NewInclude[kadt.Key, kadt.PeerID](nodes[0].RoutingTable, icfg)
 	require.NoError(t, err)
 
-	cfg := DefaultRoutingConfig()
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 	cfg.Clock = clk
 
-	b, err := ComposeRoutingBehaviour(nodes[0].NodeID, idleBootstrap(), include, idleProbe(), idleExplore(), cfg)
+	b, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](nodes[0].NodeID, idleBootstrap(), include, idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
-	b.Notify(ctx, &EventAddNode{
+	b.Notify(ctx, &EventAddNode[kadt.Key, kadt.PeerID]{
 		NodeID: nodes[len(nodes)-1].NodeID,
 	})
 
@@ -190,15 +190,15 @@ func buildWaitingProbeBehaviour(t *testing.T, ctx context.Context, clk clock.Clo
 	probe, err := routing.NewProbe[kadt.Key](nodes[0].RoutingTable, pcfg)
 	require.NoError(t, err)
 
-	cfg := DefaultRoutingConfig()
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 	cfg.Clock = clk
 
-	b, err := ComposeRoutingBehaviour(nodes[0].NodeID, idleBootstrap(), idleInclude(), probe, idleExplore(), cfg)
+	b, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](nodes[0].NodeID, idleBootstrap(), idleInclude(), probe, idleExplore(), cfg)
 	require.NoError(t, err)
 
 	// the linear topology puts the second node in the first node's routing table, which
 	// is where the probe takes the nodes it checks from
-	b.Notify(ctx, &EventRoutingUpdated{
+	b.Notify(ctx, &EventRoutingUpdated[kadt.Key, kadt.PeerID]{
 		NodeID: nodes[1].NodeID,
 	})
 
@@ -210,7 +210,7 @@ func buildWaitingProbeBehaviour(t *testing.T, ctx context.Context, clk clock.Clo
 func buildWaitingExploreBehaviour(t *testing.T, ctx context.Context, clk clock.Clock) Behaviour[BehaviourEvent, BehaviourEvent] {
 	nodes := testPeers(t, 2)
 
-	cfg := DefaultRoutingConfig()
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 	cfg.Clock = clk
 
 	schedule, err := routing.NewDynamicExploreSchedule(cfg.ExploreMaximumCpl, clk.Now(), conformanceDeadline, cfg.ExploreIntervalMultiplier, cfg.ExploreIntervalJitter)
@@ -219,7 +219,7 @@ func buildWaitingExploreBehaviour(t *testing.T, ctx context.Context, clk clock.C
 	explore, err := routing.NewExplore[kadt.Key](nodes[0].NodeID, nodes[0].RoutingTable, cplutil.GenRandPeerID, schedule, routing.DefaultExploreConfig())
 	require.NoError(t, err)
 
-	b, err := ComposeRoutingBehaviour(nodes[0].NodeID, idleBootstrap(), idleInclude(), idleProbe(), explore, cfg)
+	b, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](nodes[0].NodeID, idleBootstrap(), idleInclude(), idleProbe(), explore, cfg)
 	require.NoError(t, err)
 
 	return b
@@ -237,7 +237,7 @@ func buildWaitingBroadcastBehaviour(t *testing.T, ctx context.Context, clk clock
 	b := newTestBroadcastBehaviour(t, clk, nodes[0].NodeID)
 
 	msg := &pb.Message{Type: pb.Message_PUT_VALUE}
-	b.Notify(ctx, &EventStartBroadcast{
+	b.Notify(ctx, &EventStartBroadcast[kadt.Key, kadt.PeerID, *pb.Message]{
 		QueryID: "test",
 		Target:  msg.Target(),
 		Message: msg,
@@ -337,10 +337,10 @@ func TestBehaviourWithNoWorkArmsNoTimer(t *testing.T) {
 		{
 			name: "routing",
 			build: func(t *testing.T, clk clock.Clock) (Behaviour[BehaviourEvent, BehaviourEvent], *readyTimer) {
-				cfg := DefaultRoutingConfig()
+				cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 				cfg.Clock = clk
 
-				b, err := ComposeRoutingBehaviour(testPeers(t, 1)[0].NodeID, idleBootstrap(), idleInclude(), idleProbe(), idleExplore(), cfg)
+				b, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](testPeers(t, 1)[0].NodeID, idleBootstrap(), idleInclude(), idleProbe(), idleExplore(), cfg)
 				require.NoError(t, err)
 				return b, b.readyTimer
 			},

@@ -1,32 +1,32 @@
 package coord
 
 import (
+	"github.com/ipfs/go-libdht/kad"
+
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
 )
 
 // EventStartBroadcast starts a new
-type EventStartBroadcast struct {
+type EventStartBroadcast[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	QueryID coordt.QueryID
-	Target  kadt.Key
-	Message *pb.Message
-	Seed    []kadt.PeerID
+	Target  K
+	Message M
+	Seed    []N
 	Config  brdcst.Config
-	Notify  QueryMonitor[*EventBroadcastFinished]
+	Notify  QueryMonitor[K, N, M, *EventBroadcastFinished[K, N]]
 }
 
-func (*EventStartBroadcast) behaviourEvent() {}
+func (*EventStartBroadcast[K, N, M]) behaviourEvent() {}
 
 // EventBroadcastFinished is emitted by the coordinator when a broadcasting
 // a record to the network has finished, either through running to completion or
 // by being canceled.
-type EventBroadcastFinished struct {
+type EventBroadcastFinished[K kad.Key[K], N kad.NodeID[K]] struct {
 	QueryID   coordt.QueryID
-	Contacted []kadt.PeerID
+	Contacted []N
 	Errors    map[string]struct {
-		Node kadt.PeerID
+		Node N
 		Err  error
 	}
 
@@ -35,5 +35,5 @@ type EventBroadcastFinished struct {
 	Err error
 }
 
-func (*EventBroadcastFinished) behaviourEvent()     {}
-func (*EventBroadcastFinished) terminalQueryEvent() {}
+func (*EventBroadcastFinished[K, N]) behaviourEvent()     {}
+func (*EventBroadcastFinished[K, N]) terminalQueryEvent() {}

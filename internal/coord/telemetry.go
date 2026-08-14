@@ -3,12 +3,17 @@ package coord
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+)
 
-	"github.com/probe-lab/zikade/tele"
+// meterName and tracerName name this package as the source of the telemetry it emits.
+const (
+	meterName  = "github.com/probe-lab/zikade/internal/coord"
+	tracerName = "github.com/probe-lab/zikade/internal/coord"
 )
 
 // Telemetry is the struct that holds a reference to all metrics and the tracer used
@@ -27,10 +32,10 @@ type Telemetry struct {
 
 // NewTelemetry initializes a Telemetry struct with the given meter and tracer providers.
 func NewTelemetry(meterProvider metric.MeterProvider, tracerProvider trace.TracerProvider) (*Telemetry, error) {
-	meter := meterProvider.Meter(tele.MeterName)
+	meter := meterProvider.Meter(meterName)
 
 	t := &Telemetry{
-		Tracer: tracerProvider.Tracer(tele.TracerName),
+		Tracer: tracerProvider.Tracer(tracerName),
 	}
 
 	var err error
@@ -54,10 +59,26 @@ func NewTelemetry(meterProvider metric.MeterProvider, tracerProvider trace.Trace
 	return t, nil
 }
 
+// logAttrNodeID returns a log attribute naming a node.
+func logAttrNodeID(n fmt.Stringer) slog.Attr {
+	return slog.String("node_id", n.String())
+}
+
+// logAttrKey returns a log attribute naming a Kademlia key. A key is not required to carry a
+// string form, so the value is left for the handler to format.
+func logAttrKey(k any) slog.Attr {
+	return slog.Any("key", k)
+}
+
 // RecordEventLoopPass records one pass of the coordinator's event loop and the time it spent
 // working. The rate at which that time accumulates is the loop's occupancy: the fraction of
 // wall clock time its single worker goroutine is unavailable to take on anything else.
 func (t *Telemetry) RecordEventLoopPass(ctx context.Context, busy time.Duration) {
 	t.eventLoopBusySeconds.Add(ctx, busy.Seconds())
 	t.eventLoopPasses.Add(ctx, 1)
+}
+
+// logAttrError returns a log attribute carrying an error.
+func logAttrError(err error) slog.Attr {
+	return slog.Any("error", err)
 }

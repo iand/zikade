@@ -11,15 +11,14 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/ipfs/go-libdht/kad"
+
 	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
-	"github.com/probe-lab/zikade/kadt"
-	"github.com/probe-lab/zikade/pb"
-	"github.com/probe-lab/zikade/tele"
 )
 
 // ErrRequestDropped is the error reported for a request dropped because no capacity was
-// available for it, either for the peer it was addressed to or across all peers.
+// available for it, either for the node it was addressed to or across all nodes.
 var ErrRequestDropped = errors.New("request dropped")
 
 type NetworkConfig struct {
@@ -33,12 +32,12 @@ type NetworkConfig struct {
 	Meter metric.Meter
 
 	// Capacity is the maximum number of requests that may be queued or in flight across
-	// all peers.
+	// all nodes.
 	Capacity int
 
-	// PeerCapacity is the maximum number of requests that may be queued or in flight for
-	// any one peer.
-	PeerCapacity int
+	// NodeCapacity is the maximum number of requests that may be queued or in flight for
+	// any one node.
+	NodeCapacity int
 
 	// IdleTimeout is how long an unused node handler is kept before it is evicted and the
 	// goroutine it uses to send messages is released.
@@ -75,10 +74,10 @@ func (cfg *NetworkConfig) Validate() error {
 		}
 	}
 
-	if cfg.PeerCapacity < 1 {
+	if cfg.NodeCapacity < 1 {
 		return &errs.ConfigurationError{
 			Component: "NetworkConfig",
-			Err:       fmt.Errorf("peer capacity must be greater than zero"),
+			Err:       fmt.Errorf("node capacity must be greater than zero"),
 		}
 	}
 
@@ -94,24 +93,24 @@ func (cfg *NetworkConfig) Validate() error {
 
 func DefaultNetworkConfig() *NetworkConfig {
 	return &NetworkConfig{
-		Logger:       tele.DefaultLogger("coord"),
-		Tracer:       tele.NoopTracer(),
-		Meter:        tele.NoopMeter(),
+		Logger:       slog.Default(),
+		Tracer:       coordt.NoopTracer(),
+		Meter:        coordt.NoopMeter(),
 		Capacity:     256,         // MAGIC
-		PeerCapacity: 3,           // MAGIC
+		NodeCapacity: 3,           // MAGIC
 		IdleTimeout:  time.Minute, // MAGIC
 	}
 }
 
-type NetworkBehaviour struct {
+type NetworkBehaviour[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
 	// cfg is a copy of the optional configuration supplied to the behaviour
 	cfg NetworkConfig
 
 	// rtr is the message router used to send messages
-	rtr coordt.Router[kadt.Key, kadt.PeerID, *pb.Message]
+	rtr coordt.Router[K, N, M]
 
 	nodeHandlersMu sync.Mutex
-	nodeHandlers   map[kadt.PeerID]*NodeHandler
+	nodeHandlers   map[string]*NodeHandler[K, N, M]
 
 	// slots limits the number of requests queued or in flight across all node handlers
 	slots *slots
@@ -134,17 +133,17 @@ type NetworkBehaviour struct {
 	tracer trace.Tracer
 }
 
-func NewNetworkBehaviour(rtr coordt.Router[kadt.Key, kadt.PeerID, *pb.Message], cfg *NetworkConfig) (*NetworkBehaviour, error) {
+func NewNetworkBehaviour[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](rtr coordt.Router[K, N, M], cfg *NetworkConfig) (*NetworkBehaviour[K, N, M], error) {
 	if cfg == nil {
 		cfg = DefaultNetworkConfig()
 	} else if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
-	b := &NetworkBehaviour{
+	b := &NetworkBehaviour[K, N, M]{
 		cfg:          *cfg,
 		rtr:          rtr,
-		nodeHandlers: make(map[kadt.PeerID]*NodeHandler),
+		nodeHandlers: make(map[string]*NodeHandler[K, N, M]),
 		slots:        newSlots(cfg.Capacity),
 		ready:        make(chan struct{}, 1),
 		logger:       cfg.Logger.With("behaviour", "network"),
@@ -221,28 +220,28 @@ func (s *slots) held() int {
 }
 
 // handlerCount returns the number of node handlers the behaviour is holding.
-func (b *NetworkBehaviour) handlerCount() int {
+func (b *NetworkBehaviour[K, N, M]) handlerCount() int {
 	b.nodeHandlersMu.Lock()
 	defer b.nodeHandlersMu.Unlock()
 
 	return len(b.nodeHandlers)
 }
 
-// Notify hands a request to the node handler for the peer it is addressed to. It does not
+// Notify hands a request to the node handler for the node it is addressed to. It does not
 // block: a request that finds no available capacity is dropped and reported back to whoever
 // asked for it as an ordinary failure, since blocking here would stop the event loop that
 // is the only thing able to drain the handler.
-func (b *NetworkBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
+func (b *NetworkBehaviour[K, N, M]) Notify(ctx context.Context, ev BehaviourEvent) {
 	ctx, span := b.tracer.Start(ctx, "NetworkBehaviour.Notify")
 	defer span.End()
 
 	switch ev := ev.(type) {
-	case *EventOutboundGetCloserNodes:
+	case *EventOutboundGetCloserNodes[K, N]:
 		if !b.notifyHandler(ctx, ev.To, ev) {
 			b.counterRequestsDropped.Add(ctx, 1)
-			b.logger.Debug("dropped request to find closer nodes", tele.LogAttrPeerID(ev.To))
+			b.logger.Debug("dropped request to find closer nodes", logAttrNodeID(ev.To))
 			if ev.Notify != nil {
-				ev.Notify.Notify(ctx, &EventGetCloserNodesFailure{
+				ev.Notify.Notify(ctx, &EventGetCloserNodesFailure[K, N]{
 					QueryID: ev.QueryID,
 					To:      ev.To,
 					Target:  ev.Target,
@@ -250,12 +249,12 @@ func (b *NetworkBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
 				})
 			}
 		}
-	case *EventOutboundSendMessage:
+	case *EventOutboundSendMessage[K, N, M]:
 		if !b.notifyHandler(ctx, ev.To, ev) {
 			b.counterRequestsDropped.Add(ctx, 1)
-			b.logger.Debug("dropped request to send message", tele.LogAttrPeerID(ev.To))
+			b.logger.Debug("dropped request to send message", logAttrNodeID(ev.To))
 			if ev.Notify != nil {
-				ev.Notify.Notify(ctx, &EventSendMessageFailure{
+				ev.Notify.Notify(ctx, &EventSendMessageFailure[K, N, M]{
 					QueryID: ev.QueryID,
 					To:      ev.To,
 					Request: ev.Message,
@@ -278,44 +277,44 @@ func (b *NetworkBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
 	}
 }
 
-// notifyHandler gives a request to the node handler for a peer, creating the handler if
+// notifyHandler gives a request to the node handler for a node, creating the handler if
 // there is not one already, and reports whether the handler accepted it. The handler map
 // lock is held across the hand-over so that a handler cannot be evicted between being
 // chosen and being given the request.
-func (b *NetworkBehaviour) notifyHandler(ctx context.Context, to kadt.PeerID, ev NodeHandlerRequest) bool {
+func (b *NetworkBehaviour[K, N, M]) notifyHandler(ctx context.Context, to N, ev NodeHandlerRequest) bool {
 	b.nodeHandlersMu.Lock()
 	defer b.nodeHandlersMu.Unlock()
 
-	nh, ok := b.nodeHandlers[to]
+	nh, ok := b.nodeHandlers[to.String()]
 	if !ok {
 		nh = NewNodeHandler(to, b.rtr, b.slots, &b.cfg, b.evictIdle)
-		b.nodeHandlers[to] = nh
+		b.nodeHandlers[to.String()] = nh
 	}
 	return nh.Notify(ctx, ev)
 }
 
 // evictIdle removes and closes a node handler that has been idle for its timeout, reporting
-// whether it was removed. It refuses a handler that is no longer the handler for its peer,
+// whether it was removed. It refuses a handler that is no longer the handler for its node,
 // and one that has taken on a request since the timeout expired.
-func (b *NetworkBehaviour) evictIdle(h *NodeHandler) bool {
+func (b *NetworkBehaviour[K, N, M]) evictIdle(h *NodeHandler[K, N, M]) bool {
 	b.nodeHandlersMu.Lock()
 	defer b.nodeHandlersMu.Unlock()
 
-	if b.nodeHandlers[h.self] != h || !h.idle() {
+	if b.nodeHandlers[h.self.String()] != h || !h.idle() {
 		return false
 	}
 
-	delete(b.nodeHandlers, h.self)
+	delete(b.nodeHandlers, h.self.String())
 	h.Close()
 
 	return true
 }
 
-func (b *NetworkBehaviour) Ready() <-chan struct{} {
+func (b *NetworkBehaviour[K, N, M]) Ready() <-chan struct{} {
 	return b.ready
 }
 
-func (b *NetworkBehaviour) Perform(ctx context.Context) (BehaviourEvent, bool) {
+func (b *NetworkBehaviour[K, N, M]) Perform(ctx context.Context) (BehaviourEvent, bool) {
 	_, span := b.tracer.Start(ctx, "NetworkBehaviour.Perform")
 	defer span.End()
 	// No inbound work can be done until Perform is complete
@@ -341,7 +340,7 @@ func (b *NetworkBehaviour) Perform(ctx context.Context) (BehaviourEvent, bool) {
 
 // Close stops all the node handlers managed by the behaviour, releasing the
 // goroutines they use to send messages. It is safe to call Close more than once.
-func (b *NetworkBehaviour) Close() {
+func (b *NetworkBehaviour[K, N, M]) Close() {
 	b.nodeHandlersMu.Lock()
 	defer b.nodeHandlersMu.Unlock()
 
@@ -351,18 +350,18 @@ func (b *NetworkBehaviour) Close() {
 	clear(b.nodeHandlers)
 }
 
-// A NodeHandler sends requests to a single peer, one at a time, from a goroutine of its
+// A NodeHandler sends requests to a single node, one at a time, from a goroutine of its
 // own. Requests that arrive with no available capacity are dropped rather than queued.
-type NodeHandler struct {
-	self   kadt.PeerID
-	rtr    coordt.Router[kadt.Key, kadt.PeerID, *pb.Message]
+type NodeHandler[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]] struct {
+	self   N
+	rtr    coordt.Router[K, N, M]
 	tracer trace.Tracer
 
-	// slots is the capacity shared with every other node handler, and peerSlots the
+	// slots is the capacity shared with every other node handler, and nodeSlots the
 	// capacity of this handler alone. A request holds one of each from the moment it is
 	// accepted until it has been sent or discarded.
 	slots     *slots
-	peerSlots *slots
+	nodeSlots *slots
 
 	// pending holds the accepted requests that have not been sent yet
 	pending chan CtxEvent[NodeHandlerRequest]
@@ -370,7 +369,7 @@ type NodeHandler struct {
 	// idleTimeout is how long the handler waits with nothing outstanding before offering
 	// itself to onIdle, which reports whether the handler was removed.
 	idleTimeout time.Duration
-	onIdle      func(*NodeHandler) bool
+	onIdle      func(*NodeHandler[K, N, M]) bool
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -379,14 +378,14 @@ type NodeHandler struct {
 	done chan struct{}
 }
 
-func NewNodeHandler(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *pb.Message], slots *slots, cfg *NetworkConfig, onIdle func(*NodeHandler) bool) *NodeHandler {
-	h := &NodeHandler{
+func NewNodeHandler[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N]](self N, rtr coordt.Router[K, N, M], slots *slots, cfg *NetworkConfig, onIdle func(*NodeHandler[K, N, M]) bool) *NodeHandler[K, N, M] {
+	h := &NodeHandler[K, N, M]{
 		self:        self,
 		rtr:         rtr,
 		tracer:      cfg.Tracer,
 		slots:       slots,
-		peerSlots:   newSlots(cfg.PeerCapacity),
-		pending:     make(chan CtxEvent[NodeHandlerRequest], cfg.PeerCapacity),
+		nodeSlots:   newSlots(cfg.NodeCapacity),
+		pending:     make(chan CtxEvent[NodeHandlerRequest], cfg.NodeCapacity),
 		idleTimeout: cfg.IdleTimeout,
 		onIdle:      onIdle,
 		stop:        make(chan struct{}),
@@ -400,7 +399,7 @@ func NewNodeHandler(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 
 // run sends the accepted requests in turn until the handler is closed or is evicted for
 // being idle.
-func (h *NodeHandler) run() {
+func (h *NodeHandler[K, N, M]) run() {
 	defer close(h.done)
 
 	// Since Go 1.23 a fired timer leaves no value behind, so Reset alone rearms it.
@@ -428,20 +427,20 @@ func (h *NodeHandler) run() {
 
 // idle reports whether every request the handler accepted has been sent or discarded. A
 // request holds one of the handler's own slots until then.
-func (h *NodeHandler) idle() bool {
-	return len(h.peerSlots.tokens) == 0
+func (h *NodeHandler[K, N, M]) idle() bool {
+	return len(h.nodeSlots.tokens) == 0
 }
 
-// Notify accepts a request to be sent to the handler's peer, reporting whether capacity was
+// Notify accepts a request to be sent to the handler's node, reporting whether capacity was
 // available for it. It does not block.
-func (h *NodeHandler) Notify(ctx context.Context, ev NodeHandlerRequest) bool {
+func (h *NodeHandler[K, N, M]) Notify(ctx context.Context, ev NodeHandlerRequest) bool {
 	ctx, span := h.tracer.Start(ctx, "NodeHandler.Notify")
 	defer span.End()
 
 	if !h.slots.acquire() {
 		return false
 	}
-	if !h.peerSlots.acquire() {
+	if !h.nodeSlots.acquire() {
 		h.slots.release()
 		return false
 	}
@@ -452,20 +451,20 @@ func (h *NodeHandler) Notify(ctx context.Context, ev NodeHandlerRequest) bool {
 }
 
 // release returns the capacity held by a request that has been sent or discarded.
-func (h *NodeHandler) release() {
-	h.peerSlots.release()
+func (h *NodeHandler[K, N, M]) release() {
+	h.nodeSlots.release()
 	h.slots.release()
 }
 
-func (h *NodeHandler) send(ctx context.Context, ev NodeHandlerRequest) {
+func (h *NodeHandler[K, N, M]) send(ctx context.Context, ev NodeHandlerRequest) {
 	switch cmd := ev.(type) {
-	case *EventOutboundGetCloserNodes:
+	case *EventOutboundGetCloserNodes[K, N]:
 		if cmd.Notify == nil {
 			break
 		}
 		nodes, err := h.rtr.GetClosestNodes(ctx, h.self, cmd.Target)
 		if err != nil {
-			cmd.Notify.Notify(ctx, &EventGetCloserNodesFailure{
+			cmd.Notify.Notify(ctx, &EventGetCloserNodesFailure[K, N]{
 				QueryID: cmd.QueryID,
 				To:      h.self,
 				Target:  cmd.Target,
@@ -474,19 +473,19 @@ func (h *NodeHandler) send(ctx context.Context, ev NodeHandlerRequest) {
 			return
 		}
 
-		cmd.Notify.Notify(ctx, &EventGetCloserNodesSuccess{
+		cmd.Notify.Notify(ctx, &EventGetCloserNodesSuccess[K, N]{
 			QueryID:     cmd.QueryID,
 			To:          h.self,
 			Target:      cmd.Target,
 			CloserNodes: nodes,
 		})
-	case *EventOutboundSendMessage:
+	case *EventOutboundSendMessage[K, N, M]:
 		if cmd.Notify == nil {
 			break
 		}
 		resp, err := h.rtr.SendMessage(ctx, h.self, cmd.Message)
 		if err != nil {
-			cmd.Notify.Notify(ctx, &EventSendMessageFailure{
+			cmd.Notify.Notify(ctx, &EventSendMessageFailure[K, N, M]{
 				QueryID: cmd.QueryID,
 				To:      h.self,
 				Request: cmd.Message,
@@ -495,7 +494,7 @@ func (h *NodeHandler) send(ctx context.Context, ev NodeHandlerRequest) {
 			return
 		}
 
-		cmd.Notify.Notify(ctx, &EventSendMessageSuccess{
+		cmd.Notify.Notify(ctx, &EventSendMessageSuccess[K, N, M]{
 			QueryID:     cmd.QueryID,
 			To:          h.self,
 			Request:     cmd.Message,
@@ -509,7 +508,7 @@ func (h *NodeHandler) send(ctx context.Context, ev NodeHandlerRequest) {
 
 // Close stops the handler from sending any further requests and discards the requests it
 // has accepted but not yet sent. It is safe to call Close more than once.
-func (h *NodeHandler) Close() {
+func (h *NodeHandler[K, N, M]) Close() {
 	h.stopOnce.Do(func() {
 		close(h.stop)
 
@@ -525,6 +524,6 @@ func (h *NodeHandler) Close() {
 	})
 }
 
-func (h *NodeHandler) ID() kadt.PeerID {
+func (h *NodeHandler[K, N, M]) ID() N {
 	return h.self
 }

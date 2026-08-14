@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
+	"github.com/probe-lab/zikade/internal/coord/cplutil"
 	"github.com/probe-lab/zikade/internal/kadtest"
 	"github.com/probe-lab/zikade/internal/nettest"
 	"github.com/probe-lab/zikade/kadt"
@@ -21,33 +22,33 @@ import (
 
 func TestConfigValidate(t *testing.T) {
 	t.Run("default is valid", func(t *testing.T) {
-		cfg := DefaultCoordinatorConfig()
+		cfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 
 		require.NoError(t, cfg.Validate())
 	})
 
 	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultCoordinatorConfig()
+		cfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 
 		cfg.Clock = nil
 		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("logger not nil", func(t *testing.T) {
-		cfg := DefaultCoordinatorConfig()
+		cfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 
 		cfg.Logger = nil
 		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("meter provider not nil", func(t *testing.T) {
-		cfg := DefaultCoordinatorConfig()
+		cfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 		cfg.MeterProvider = nil
 		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("tracer provider not nil", func(t *testing.T) {
-		cfg := DefaultCoordinatorConfig()
+		cfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 		cfg.TracerProvider = nil
 		require.Error(t, cfg.Validate())
 	})
@@ -60,13 +61,13 @@ func TestExhaustiveQuery(t *testing.T) {
 		_, nodes, err := nettest.LinearTopology(4, clock.New())
 		require.NoError(t, err)
 
-		ccfg := DefaultCoordinatorConfig()
+		ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 
 		// A (ids[0]) is looking for D (ids[3])
 		// A will first ask B, B will reply with C's address (and A's address)
 		// A will then ask C, C will reply with D's address (and B's address)
 		self := nodes[0].NodeID
-		c, err := NewCoordinator(self, nodes[0].Router, nodes[0].RoutingTable, ccfg)
+		c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](self, nodes[0].Router, nodes[0].RoutingTable, cplutil.GenRandPeerID, ccfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, c.Close()) })
 
@@ -103,7 +104,7 @@ func TestQueryReturnsClosestNodes(t *testing.T) {
 		require.NoError(t, err)
 
 		self := nodes[0].NodeID
-		c, err := NewCoordinator(self, nodes[0].Router, nodes[0].RoutingTable, DefaultCoordinatorConfig())
+		c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](self, nodes[0].Router, nodes[0].RoutingTable, cplutil.GenRandPeerID, DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]())
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, c.Close()) })
 
@@ -125,17 +126,17 @@ func TestRoutingUpdatedEventEmittedForCloserNodes(t *testing.T) {
 		_, nodes, err := nettest.LinearTopology(4, clock.New())
 		require.NoError(t, err)
 
-		ccfg := DefaultCoordinatorConfig()
+		ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 
 		// A (ids[0]) is looking for D (ids[3])
 		// A will first ask B, B will reply with C's address (and A's address)
 		// A will then ask C, C will reply with D's address (and B's address)
 		self := nodes[0].NodeID
-		c, err := NewCoordinator(self, nodes[0].Router, nodes[0].RoutingTable, ccfg)
+		c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](self, nodes[0].Router, nodes[0].RoutingTable, cplutil.GenRandPeerID, ccfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, c.Close()) })
 
-		rn := NewBufferedRoutingNotifier()
+		rn := NewBufferedRoutingNotifier[kadt.Key, kadt.PeerID]()
 		c.SetRoutingNotifier(rn)
 
 		qfn := func(ctx context.Context, id kadt.PeerID, msg *pb.Message, stats coordt.QueryStats) error {
@@ -161,13 +162,13 @@ func TestRoutingUpdatedEventEmittedForCloserNodes(t *testing.T) {
 
 		// the order in which these events are emitted may vary depending on the
 		// order in which the coordinator drained its behaviours
-		ev1, err := rn.Expect(ctx, &EventRoutingUpdated{})
+		ev1, err := rn.Expect(ctx, &EventRoutingUpdated[kadt.Key, kadt.PeerID]{})
 		require.NoError(t, err)
-		tev1 := ev1.(*EventRoutingUpdated)
+		tev1 := ev1.(*EventRoutingUpdated[kadt.Key, kadt.PeerID])
 
-		ev2, err := rn.Expect(ctx, &EventRoutingUpdated{})
+		ev2, err := rn.Expect(ctx, &EventRoutingUpdated[kadt.Key, kadt.PeerID]{})
 		require.NoError(t, err)
-		tev2 := ev2.(*EventRoutingUpdated)
+		tev2 := ev2.(*EventRoutingUpdated[kadt.Key, kadt.PeerID])
 
 		if tev1.NodeID.Equal(nodes[2].NodeID) {
 			require.Equal(t, nodes[3].NodeID, tev2.NodeID)
@@ -186,15 +187,15 @@ func TestBootstrap(t *testing.T) {
 		_, nodes, err := nettest.LinearTopology(4, clock.New())
 		require.NoError(t, err)
 
-		ccfg := DefaultCoordinatorConfig()
+		ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 		ccfg.Routing.BootstrapPeers = []kadt.PeerID{nodes[1].NodeID}
 
 		self := nodes[0].NodeID
-		d, err := NewCoordinator(self, nodes[0].Router, nodes[0].RoutingTable, ccfg)
+		d, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](self, nodes[0].Router, nodes[0].RoutingTable, cplutil.GenRandPeerID, ccfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, d.Close()) })
 
-		rn := NewBufferedRoutingNotifier()
+		rn := NewBufferedRoutingNotifier[kadt.Key, kadt.PeerID]()
 		d.SetRoutingNotifier(rn)
 
 		err = d.Bootstrap(ctx)
@@ -213,10 +214,10 @@ func TestBootstrap(t *testing.T) {
 		require.Equal(t, 3, tevf.Stats.Success)
 		require.Equal(t, 0, tevf.Stats.Failure)
 
-		_, err = rn.Expect(ctx, &EventRoutingUpdated{})
+		_, err = rn.Expect(ctx, &EventRoutingUpdated[kadt.Key, kadt.PeerID]{})
 		require.NoError(t, err)
 
-		_, err = rn.Expect(ctx, &EventRoutingUpdated{})
+		_, err = rn.Expect(ctx, &EventRoutingUpdated[kadt.Key, kadt.PeerID]{})
 		require.NoError(t, err)
 
 		// coordinator will have node1 in its routing table
@@ -237,16 +238,16 @@ func TestIncludeNode(t *testing.T) {
 		_, nodes, err := nettest.LinearTopology(4, clock.New())
 		require.NoError(t, err)
 
-		ccfg := DefaultCoordinatorConfig()
+		ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 
 		candidate := nodes[len(nodes)-1].NodeID // not in nodes[0] routing table
 
 		self := nodes[0].NodeID
-		d, err := NewCoordinator(self, nodes[0].Router, nodes[0].RoutingTable, ccfg)
+		d, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](self, nodes[0].Router, nodes[0].RoutingTable, cplutil.GenRandPeerID, ccfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, d.Close()) })
 
-		rn := NewBufferedRoutingNotifier()
+		rn := NewBufferedRoutingNotifier[kadt.Key, kadt.PeerID]()
 		d.SetRoutingNotifier(rn)
 
 		// the routing table should not contain the node yet
@@ -259,10 +260,10 @@ func TestIncludeNode(t *testing.T) {
 		// the include state machine runs in the background, wait for it to finish
 		synctest.Wait()
 
-		ev, err := rn.Expect(ctx, &EventRoutingUpdated{})
+		ev, err := rn.Expect(ctx, &EventRoutingUpdated[kadt.Key, kadt.PeerID]{})
 		require.NoError(t, err)
 
-		tev := ev.(*EventRoutingUpdated)
+		tev := ev.(*EventRoutingUpdated[kadt.Key, kadt.PeerID])
 		require.Equal(t, candidate, tev.NodeID)
 
 		// the routing table should now contain the node
@@ -312,13 +313,13 @@ func TestCoordinatorTimesOutIdleQuery(t *testing.T) {
 		_, nodes, err := nettest.LinearTopology(2, clock.New())
 		require.NoError(t, err)
 
-		ccfg := DefaultCoordinatorConfig()
+		ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 		ccfg.Query.RequestTimeout = 2 * time.Second
 		ccfg.Query.Timeout = 4 * time.Second
 
 		rtr := &silentRouter{}
 
-		c, err := NewCoordinator(nodes[0].NodeID, rtr, nodes[0].RoutingTable, ccfg)
+		c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, rtr, nodes[0].RoutingTable, cplutil.GenRandPeerID, ccfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, c.Close()) })
 
@@ -345,12 +346,12 @@ func TestCoordinatorExploresOnSchedule(t *testing.T) {
 		_, nodes, err := nettest.LinearTopology(2, clock.New())
 		require.NoError(t, err)
 
-		ccfg := DefaultCoordinatorConfig()
+		ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 		ccfg.Routing.ExploreInterval = 2 * time.Second
 
 		rtr := &silentRouter{}
 
-		c, err := NewCoordinator(nodes[0].NodeID, rtr, nodes[0].RoutingTable, ccfg)
+		c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, rtr, nodes[0].RoutingTable, cplutil.GenRandPeerID, ccfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, c.Close()) })
 
@@ -374,7 +375,7 @@ func TestCoordinatorBootstrapTimesOut(t *testing.T) {
 		_, nodes, err := nettest.LinearTopology(2, clock.New())
 		require.NoError(t, err)
 
-		ccfg := DefaultCoordinatorConfig()
+		ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 		ccfg.Routing.BootstrapPeers = []kadt.PeerID{nodes[1].NodeID}
 
 		// the bootstrap must give up before the request it is waiting on does, otherwise
@@ -384,11 +385,11 @@ func TestCoordinatorBootstrapTimesOut(t *testing.T) {
 
 		rtr := &silentRouter{}
 
-		c, err := NewCoordinator(nodes[0].NodeID, rtr, nodes[0].RoutingTable, ccfg)
+		c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, rtr, nodes[0].RoutingTable, cplutil.GenRandPeerID, ccfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, c.Close()) })
 
-		rn := NewBufferedRoutingNotifier()
+		rn := NewBufferedRoutingNotifier[kadt.Key, kadt.PeerID]()
 		c.SetRoutingNotifier(rn)
 
 		err = c.Bootstrap(ctx)
@@ -411,10 +412,10 @@ func TestCoordinatorBootstrapsWhenRoutingTableEmpty(t *testing.T) {
 		rt, err := triert.New[kadt.Key, kadt.PeerID](nodes[0].NodeID, nil)
 		require.NoError(t, err)
 
-		ccfg := DefaultCoordinatorConfig()
+		ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 		ccfg.Routing.BootstrapPeers = []kadt.PeerID{nodes[1].NodeID}
 
-		c, err := NewCoordinator(nodes[0].NodeID, nodes[0].Router, rt, ccfg)
+		c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, nodes[0].Router, rt, cplutil.GenRandPeerID, ccfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, c.Close()) })
 
@@ -464,11 +465,11 @@ func TestCoordinatorContinuesWhenPeerStalls(t *testing.T) {
 			require.True(t, rt.AddNode(n.NodeID))
 		}
 
-		ccfg := DefaultCoordinatorConfig()
+		ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 
 		// one slot per peer, so the queries beyond the first to reach the stalled peer
 		// have to be dropped rather than queued behind it
-		ccfg.Network.PeerCapacity = 1
+		ccfg.Network.NodeCapacity = 1
 
 		// the query that does reach the stalled peer ends when its request runs out of
 		// time, so that has to fall inside the test's own deadline
@@ -476,7 +477,7 @@ func TestCoordinatorContinuesWhenPeerStalls(t *testing.T) {
 
 		rtr := &stallRouter{Router: nodes[0].Router, stall: nodes[1].NodeID}
 
-		c, err := NewCoordinator(nodes[0].NodeID, rtr, rt, ccfg)
+		c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, rtr, rt, cplutil.GenRandPeerID, ccfg)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, c.Close()) })
 

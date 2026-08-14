@@ -26,7 +26,7 @@ type Topology struct {
 	tb   testing.TB
 	mn   mocknet.Mocknet
 	dhts map[string]*DHT
-	rns  map[string]*coord.BufferedRoutingNotifier
+	rns  map[string]*coord.BufferedRoutingNotifier[kadt.Key, kadt.PeerID]
 }
 
 // NewBubbleTopology returns a Topology for a test running inside a
@@ -59,7 +59,7 @@ func NewTopology(tb testing.TB) *Topology {
 		tb:   tb,
 		mn:   mn,
 		dhts: make(map[string]*DHT),
-		rns:  make(map[string]*coord.BufferedRoutingNotifier),
+		rns:  make(map[string]*coord.BufferedRoutingNotifier[kadt.Key, kadt.PeerID]),
 	}
 }
 
@@ -102,7 +102,7 @@ func (t *Topology) AddServer(cfg *Config) *DHT {
 	d, err := New(h, cfg)
 	require.NoError(t.tb, err)
 
-	rn := coord.NewBufferedRoutingNotifier()
+	rn := coord.NewBufferedRoutingNotifier[kadt.Key, kadt.PeerID]()
 	d.kad.SetRoutingNotifier(rn)
 
 	t.tb.Cleanup(func() {
@@ -137,7 +137,7 @@ func (t *Topology) AddClient(cfg *Config) *DHT {
 	d, err := New(h, cfg)
 	require.NoError(t.tb, err)
 
-	rn := coord.NewBufferedRoutingNotifier()
+	rn := coord.NewBufferedRoutingNotifier[kadt.Key, kadt.PeerID]()
 	d.kad.SetRoutingNotifier(rn)
 
 	t.tb.Cleanup(func() {
@@ -240,7 +240,7 @@ func (t *Topology) ConnectChain(ctx context.Context, ds ...*DHT) {
 }
 
 // ExpectRoutingUpdated blocks until an [EventRoutingUpdated] event is emitted by the supplied [DHT] the specified peer id.
-func (t *Topology) ExpectRoutingUpdated(ctx context.Context, d *DHT, id peer.ID) (*coord.EventRoutingUpdated, error) {
+func (t *Topology) ExpectRoutingUpdated(ctx context.Context, d *DHT, id peer.ID) (*coord.EventRoutingUpdated[kadt.Key, kadt.PeerID], error) {
 	did := t.makeid(d)
 	rn, ok := t.rns[did]
 	require.True(t.tb, ok, "expected routing notifier for supplied DHT")
@@ -249,7 +249,7 @@ func (t *Topology) ExpectRoutingUpdated(ctx context.Context, d *DHT, id peer.ID)
 }
 
 // ExpectRoutingRemoved blocks until an [EventRoutingRemoved] event is emitted by the supplied [DHT] the specified peer id.
-func (t *Topology) ExpectRoutingRemoved(ctx context.Context, d *DHT, id peer.ID) (*coord.EventRoutingRemoved, error) {
+func (t *Topology) ExpectRoutingRemoved(ctx context.Context, d *DHT, id peer.ID) (*coord.EventRoutingRemoved[kadt.Key, kadt.PeerID], error) {
 	did := t.makeid(d)
 	rn, ok := t.rns[did]
 	require.True(t.tb, ok, "expected routing notifier for supplied DHT")

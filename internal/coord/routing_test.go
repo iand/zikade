@@ -40,38 +40,38 @@ func idleExplore() *RecordingSM[routing.ExploreEvent, routing.ExploreState] {
 
 func TestRoutingConfigValidate(t *testing.T) {
 	t.Run("default is valid", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		require.NoError(t, cfg.Validate())
 	})
 
 	t.Run("clock is not nil", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.Clock = nil
 		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("logger not nil", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 		cfg.Logger = nil
 		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("tracer not nil", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 		cfg.Tracer = nil
 		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("meter is not nil", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 		cfg.Meter = nil
 		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("bootstrap timeout positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 		cfg.BootstrapTimeout = 0
 		require.Error(t, cfg.Validate())
 		cfg.BootstrapTimeout = -1
@@ -79,7 +79,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("bootstrap request concurrency positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 		cfg.BootstrapRequestConcurrency = 0
 		require.Error(t, cfg.Validate())
 		cfg.BootstrapRequestConcurrency = -1
@@ -87,7 +87,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("bootstrap request timeout positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 		cfg.BootstrapRequestTimeout = 0
 		require.Error(t, cfg.Validate())
 		cfg.BootstrapRequestTimeout = -1
@@ -95,7 +95,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("connectivity check timeout positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 		cfg.ConnectivityCheckTimeout = 0
 		require.Error(t, cfg.Validate())
 		cfg.ConnectivityCheckTimeout = -1
@@ -103,7 +103,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("probe request concurrency positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.ProbeRequestConcurrency = 0
 		require.Error(t, cfg.Validate())
@@ -112,7 +112,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("probe check interval positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 		cfg.ProbeCheckInterval = 0
 		require.Error(t, cfg.Validate())
 		cfg.ProbeCheckInterval = -1
@@ -120,7 +120,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("include request concurrency positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.IncludeRequestConcurrency = 0
 		require.Error(t, cfg.Validate())
@@ -129,7 +129,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("include queue capacity positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.IncludeQueueCapacity = 0
 		require.Error(t, cfg.Validate())
@@ -138,7 +138,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("explore timeout positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.ExploreTimeout = 0
 		require.Error(t, cfg.Validate())
@@ -147,7 +147,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("explore request concurrency positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.ExploreRequestConcurrency = 0
 		require.Error(t, cfg.Validate())
@@ -156,7 +156,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("explore request timeout positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.ExploreRequestTimeout = 0
 		require.Error(t, cfg.Validate())
@@ -165,7 +165,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("explore maximum cpl positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.ExploreMaximumCpl = 0
 		require.Error(t, cfg.Validate())
@@ -174,14 +174,14 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("explore maximum 15 or less", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.ExploreMaximumCpl = 16
 		require.Error(t, cfg.Validate())
 	})
 
 	t.Run("explore interval positive", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.ExploreInterval = 0
 		require.Error(t, cfg.Validate())
@@ -190,7 +190,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("explore interval multiplier at least 1", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.ExploreIntervalMultiplier = 0
 		require.Error(t, cfg.Validate())
@@ -201,7 +201,7 @@ func TestRoutingConfigValidate(t *testing.T) {
 	})
 
 	t.Run("explore interval between 0 and 0.05", func(t *testing.T) {
-		cfg := DefaultRoutingConfig()
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
 
 		cfg.ExploreIntervalJitter = 0.1
 		require.Error(t, cfg.Validate())
@@ -223,11 +223,11 @@ func TestRoutingStartBootstrapSendsEvent(t *testing.T) {
 	// records the event passed to bootstrap
 	bootstrap := NewRecordingSM[routing.BootstrapEvent, routing.BootstrapState](&routing.StateBootstrapIdle{})
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
-	ev := &EventStartBootstrap{
+	ev := &EventStartBootstrap[kadt.Key, kadt.PeerID]{
 		SeedNodes: []kadt.PeerID{nodes[1].NodeID},
 	}
 
@@ -263,11 +263,11 @@ func TestRoutingBootstrapRequestConcurrency(t *testing.T) {
 	bootstrap, err := routing.NewBootstrap[kadt.Key](self, nodes[0].RoutingTable, nil, bcfg)
 	require.NoError(t, err)
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
-	routingBehaviour.Notify(ctx, &EventStartBootstrap{
+	routingBehaviour.Notify(ctx, &EventStartBootstrap[kadt.Key, kadt.PeerID]{
 		SeedNodes: []kadt.PeerID{
 			nodes[1].NodeID,
 			nodes[2].NodeID,
@@ -281,7 +281,7 @@ func TestRoutingBootstrapRequestConcurrency(t *testing.T) {
 
 	var requested []kadt.PeerID
 	for _, ev := range evs {
-		if oev, ok := ev.(*EventOutboundGetCloserNodes); ok && oev.QueryID == routing.BootstrapQueryID {
+		if oev, ok := ev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]); ok && oev.QueryID == routing.BootstrapQueryID {
 			requested = append(requested, oev.To)
 		}
 	}
@@ -300,11 +300,11 @@ func TestRoutingBootstrapGetClosestNodesSuccess(t *testing.T) {
 	// records the event passed to bootstrap
 	bootstrap := NewRecordingSM[routing.BootstrapEvent, routing.BootstrapState](&routing.StateBootstrapIdle{})
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
-	ev := &EventGetCloserNodesSuccess{
+	ev := &EventGetCloserNodesSuccess[kadt.Key, kadt.PeerID]{
 		QueryID:     routing.BootstrapQueryID,
 		To:          nodes[1].NodeID,
 		Target:      nodes[0].NodeID.Key(),
@@ -333,12 +333,12 @@ func TestRoutingBootstrapGetClosestNodesFailure(t *testing.T) {
 	// records the event passed to bootstrap
 	bootstrap := NewRecordingSM[routing.BootstrapEvent, routing.BootstrapState](&routing.StateBootstrapIdle{})
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, bootstrap, idleInclude(), idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
 	failure := errors.New("failed")
-	ev := &EventGetCloserNodesFailure{
+	ev := &EventGetCloserNodesFailure[kadt.Key, kadt.PeerID]{
 		QueryID: routing.BootstrapQueryID,
 		To:      nodes[1].NodeID,
 		Target:  nodes[0].NodeID.Key(),
@@ -367,11 +367,11 @@ func TestRoutingAddNodeInfoSendsEvent(t *testing.T) {
 	// records the event passed to include
 	include := NewRecordingSM[routing.IncludeEvent, routing.IncludeState](&routing.StateIncludeIdle{})
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, idleBootstrap(), include, idleProbe(), idleExplore(), cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, idleBootstrap(), include, idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
-	ev := &EventAddNode{
+	ev := &EventAddNode[kadt.Key, kadt.PeerID]{
 		NodeID: nodes[2].NodeID,
 	}
 
@@ -396,11 +396,11 @@ func TestRoutingIncludeGetClosestNodesSuccess(t *testing.T) {
 	// records the event passed to include
 	include := NewRecordingSM[routing.IncludeEvent, routing.IncludeState](&routing.StateIncludeIdle{})
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, idleBootstrap(), include, idleProbe(), idleExplore(), cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, idleBootstrap(), include, idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
-	ev := &EventGetCloserNodesSuccess{
+	ev := &EventGetCloserNodesSuccess[kadt.Key, kadt.PeerID]{
 		QueryID:     coordt.QueryID("include"),
 		To:          nodes[1].NodeID,
 		Target:      nodes[0].NodeID.Key(),
@@ -428,12 +428,12 @@ func TestRoutingIncludeGetClosestNodesFailure(t *testing.T) {
 	// records the event passed to include
 	include := NewRecordingSM[routing.IncludeEvent, routing.IncludeState](&routing.StateIncludeIdle{})
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, idleBootstrap(), include, idleProbe(), idleExplore(), cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, idleBootstrap(), include, idleProbe(), idleExplore(), cfg)
 	require.NoError(t, err)
 
 	failure := errors.New("failed")
-	ev := &EventGetCloserNodesFailure{
+	ev := &EventGetCloserNodesFailure[kadt.Key, kadt.PeerID]{
 		QueryID: coordt.QueryID("include"),
 		To:      nodes[1].NodeID,
 		Target:  nodes[0].NodeID.Key(),
@@ -472,8 +472,8 @@ func TestRoutingIncludedNodeAddToProbeList(t *testing.T) {
 		probe, err := routing.NewProbe[kadt.Key](rt, probeCfg)
 		require.NoError(t, err)
 
-		cfg := DefaultRoutingConfig()
-		routingBehaviour, err := ComposeRoutingBehaviour(self, idleBootstrap(), include, probe, idleExplore(), cfg)
+		cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+		routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, idleBootstrap(), include, probe, idleExplore(), cfg)
 		require.NoError(t, err)
 
 		// a new node to be included
@@ -484,7 +484,7 @@ func TestRoutingIncludedNodeAddToProbeList(t *testing.T) {
 		require.False(t, intable)
 
 		// notify that there is a new node to be included
-		routingBehaviour.Notify(ctx, &EventAddNode{
+		routingBehaviour.Notify(ctx, &EventAddNode[kadt.Key, kadt.PeerID]{
 			NodeID: candidate,
 		})
 
@@ -493,15 +493,15 @@ func TestRoutingIncludedNodeAddToProbeList(t *testing.T) {
 		require.True(t, ok)
 
 		// include should be asking to send a message to the node
-		require.IsType(t, &EventOutboundGetCloserNodes{}, dev)
+		require.IsType(t, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, dev)
 
-		oev := dev.(*EventOutboundGetCloserNodes)
+		oev := dev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])
 
 		// advance time a little
 		time.Sleep(time.Second)
 
 		// notify a successful response back (best to use the notify included in the event even though it will be the behaviour's Notify method)
-		oev.Notify.Notify(ctx, &EventGetCloserNodesSuccess{
+		oev.Notify.Notify(ctx, &EventGetCloserNodesSuccess[kadt.Key, kadt.PeerID]{
 			QueryID:     oev.QueryID,
 			To:          oev.To,
 			Target:      oev.Target,
@@ -515,7 +515,7 @@ func TestRoutingIncludedNodeAddToProbeList(t *testing.T) {
 
 		// routing update event should be emitted from the include state machine
 		require.True(t, ok)
-		require.IsType(t, &EventRoutingUpdated{}, dev)
+		require.IsType(t, &EventRoutingUpdated[kadt.Key, kadt.PeerID]{}, dev)
 
 		// drain any pending work
 		DrainBehaviour[BehaviourEvent, BehaviourEvent](t, ctx, routingBehaviour)
@@ -526,10 +526,10 @@ func TestRoutingIncludedNodeAddToProbeList(t *testing.T) {
 		// probe should be sent for the node
 		dev, ok = routingBehaviour.Perform(ctx)
 		require.True(t, ok)
-		require.IsType(t, &EventOutboundGetCloserNodes{}, dev)
+		require.IsType(t, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, dev)
 
 		// confirm that the message is for the correct node
-		oev = dev.(*EventOutboundGetCloserNodes)
+		oev = dev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])
 		require.Equal(t, coordt.QueryID("probe"), oev.QueryID)
 		require.Equal(t, candidate, oev.To)
 	})
@@ -552,8 +552,8 @@ func TestRoutingExploreSendsEvent(t *testing.T) {
 	explore, err := routing.NewExplore[kadt.Key](self, rt, cplutil.GenRandPeerID, schedule, exploreCfg)
 	require.NoError(t, err)
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, idleBootstrap(), idleInclude(), idleProbe(), explore, cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, idleBootstrap(), idleInclude(), idleProbe(), explore, cfg)
 	require.NoError(t, err)
 
 	routingBehaviour.Notify(ctx, &EventRoutingPoll{})
@@ -563,8 +563,8 @@ func TestRoutingExploreSendsEvent(t *testing.T) {
 	require.True(t, ok)
 
 	// include should be asking to send a message to the node
-	require.IsType(t, &EventOutboundGetCloserNodes{}, dev)
-	gcl := dev.(*EventOutboundGetCloserNodes)
+	require.IsType(t, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, dev)
+	gcl := dev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])
 
 	require.Equal(t, routing.ExploreQueryID, gcl.QueryID)
 
@@ -583,11 +583,11 @@ func TestRoutingExploreGetClosestNodesSuccess(t *testing.T) {
 	// records the event passed to explore
 	explore := NewRecordingSM[routing.ExploreEvent, routing.ExploreState](&routing.StateExploreIdle{})
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, idleBootstrap(), idleInclude(), idleProbe(), explore, cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, idleBootstrap(), idleInclude(), idleProbe(), explore, cfg)
 	require.NoError(t, err)
 
-	ev := &EventGetCloserNodesSuccess{
+	ev := &EventGetCloserNodesSuccess[kadt.Key, kadt.PeerID]{
 		QueryID:     routing.ExploreQueryID,
 		To:          nodes[1].NodeID,
 		Target:      nodes[0].NodeID.Key(),
@@ -615,12 +615,12 @@ func TestRoutingExploreGetClosestNodesFailure(t *testing.T) {
 	// records the event passed to explore
 	explore := NewRecordingSM[routing.ExploreEvent, routing.ExploreState](&routing.StateExploreIdle{})
 
-	cfg := DefaultRoutingConfig()
-	routingBehaviour, err := ComposeRoutingBehaviour(self, idleBootstrap(), idleInclude(), idleProbe(), explore, cfg)
+	cfg := DefaultRoutingConfig[kadt.Key, kadt.PeerID]()
+	routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, idleBootstrap(), idleInclude(), idleProbe(), explore, cfg)
 	require.NoError(t, err)
 
 	failure := errors.New("failed")
-	ev := &EventGetCloserNodesFailure{
+	ev := &EventGetCloserNodesFailure[kadt.Key, kadt.PeerID]{
 		QueryID: routing.ExploreQueryID,
 		To:      nodes[1].NodeID,
 		Target:  nodes[0].NodeID.Key(),
@@ -658,12 +658,12 @@ func TestRoutingProbeKeepsNodeWhenCheckDropped(t *testing.T) {
 		probe, err := routing.NewProbe[kadt.Key](rt, probeCfg)
 		require.NoError(t, err)
 
-		routingBehaviour, err := ComposeRoutingBehaviour(self, idleBootstrap(), idleInclude(), probe, idleExplore(), DefaultRoutingConfig())
+		routingBehaviour, err := ComposeRoutingBehaviour[kadt.Key, kadt.PeerID](self, idleBootstrap(), idleInclude(), probe, idleExplore(), DefaultRoutingConfig[kadt.Key, kadt.PeerID]())
 		require.NoError(t, err)
 
 		// the linear topology puts the second node in the first node's routing table
 		checked := nodes[1].NodeID
-		routingBehaviour.Notify(ctx, &EventRoutingUpdated{NodeID: checked})
+		routingBehaviour.Notify(ctx, &EventRoutingUpdated[kadt.Key, kadt.PeerID]{NodeID: checked})
 		DrainBehaviour(t, ctx, routingBehaviour)
 
 		// advance past the check interval so a connectivity check falls due
@@ -671,13 +671,13 @@ func TestRoutingProbeKeepsNodeWhenCheckDropped(t *testing.T) {
 
 		dev, ok := routingBehaviour.Perform(ctx)
 		require.True(t, ok)
-		require.IsType(t, &EventOutboundGetCloserNodes{}, dev)
+		require.IsType(t, &EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID]{}, dev)
 
-		oev := dev.(*EventOutboundGetCloserNodes)
+		oev := dev.(*EventOutboundGetCloserNodes[kadt.Key, kadt.PeerID])
 		require.Equal(t, ProbeQueryID, oev.QueryID)
 		require.Equal(t, checked, oev.To)
 
-		oev.Notify.Notify(ctx, &EventGetCloserNodesFailure{
+		oev.Notify.Notify(ctx, &EventGetCloserNodesFailure[kadt.Key, kadt.PeerID]{
 			QueryID: oev.QueryID,
 			To:      oev.To,
 			Target:  oev.Target,

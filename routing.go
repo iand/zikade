@@ -508,3 +508,21 @@ func (d *DHT) Bootstrap(ctx context.Context) error {
 
 	return d.kad.Bootstrap(ctx)
 }
+
+// verifyStoredRecord checks that a remote node stored the record it was sent.
+// Only PUT_VALUE draws an echoed record back.
+func verifyStoredRecord(req, resp *pb.Message) error {
+	if req.GetType() != pb.Message_PUT_VALUE {
+		return nil
+	}
+
+	if resp == nil {
+		return fmt.Errorf("no response to PUT_VALUE")
+	}
+
+	if !bytes.Equal(resp.GetRecord().GetValue(), req.GetRecord().GetValue()) {
+		return fmt.Errorf("record not stored correctly")
+	}
+
+	return nil
+}

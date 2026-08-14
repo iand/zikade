@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/benbjohnson/clock"
-	recpb "github.com/libp2p/go-libp2p-record/pb"
 	"github.com/stretchr/testify/require"
 
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
@@ -34,7 +33,7 @@ func TestBroadcastBehaviourContactsAllSeeds(t *testing.T) {
 	pool, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, nil)
 	require.NoError(t, err)
 
-	b, err := NewPooledBroadcastBehaviour(pool, nil)
+	b, err := NewPooledBroadcastBehaviour[kadt.Key, kadt.PeerID, *pb.Message](pool, nil)
 	require.NoError(t, err)
 
 	seeds := []kadt.PeerID{
@@ -47,87 +46,25 @@ func TestBroadcastBehaviourContactsAllSeeds(t *testing.T) {
 
 	msg := &pb.Message{Type: pb.Message_PUT_VALUE}
 
-	b.Notify(ctx, &EventStartBroadcast{
+	b.Notify(ctx, &EventStartBroadcast[kadt.Key, kadt.PeerID, *pb.Message]{
 		QueryID: "test",
 		Target:  msg.Target(),
 		Message: msg,
 		Seed:    seeds,
 		Config:  brdcst.DefaultConfigStatic(),
-		Notify:  NewBroadcastWaiter(0),
+		Notify:  NewBroadcastWaiter[kadt.Key, kadt.PeerID, *pb.Message](0),
 	})
 
 	evs := PerformWhileReady(t, ctx, b)
 
 	var contacted []kadt.PeerID
 	for _, ev := range evs {
-		if oev, ok := ev.(*EventOutboundSendMessage); ok {
+		if oev, ok := ev.(*EventOutboundSendMessage[kadt.Key, kadt.PeerID, *pb.Message]); ok {
 			contacted = append(contacted, oev.To)
 		}
 	}
 
 	require.ElementsMatch(t, seeds, contacted, "expected every seed to be sent the record")
-}
-
-func TestVerifyStoredRecord(t *testing.T) {
-	value := []byte("stored value")
-
-	putValue := func(v []byte) *pb.Message {
-		return &pb.Message{
-			Type:   pb.Message_PUT_VALUE,
-			Key:    []byte("/pk/key"),
-			Record: &recpb.Record{Key: []byte("/pk/key"), Value: v},
-		}
-	}
-
-	testCases := []struct {
-		name    string
-		req     *pb.Message
-		resp    *pb.Message
-		wantErr bool
-	}{
-		{
-			name:    "echoed record matches",
-			req:     putValue(value),
-			resp:    putValue(value),
-			wantErr: false,
-		},
-		{
-			name:    "echoed record differs",
-			req:     putValue(value),
-			resp:    putValue([]byte("something else")),
-			wantErr: true,
-		},
-		{
-			name:    "no response to put",
-			req:     putValue(value),
-			resp:    nil,
-			wantErr: true,
-		},
-		{
-			name:    "echoed record absent",
-			req:     putValue(value),
-			resp:    &pb.Message{Type: pb.Message_PUT_VALUE},
-			wantErr: true,
-		},
-		{
-			name:    "add provider without response",
-			req:     &pb.Message{Type: pb.Message_ADD_PROVIDER, Key: []byte("key")},
-			resp:    nil,
-			wantErr: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := verifyStoredRecord(tc.req, tc.resp)
-			if tc.wantErr && err == nil {
-				t.Errorf("got nil error, want an error")
-			}
-			if !tc.wantErr && err != nil {
-				t.Errorf("got error %v, want nil", err)
-			}
-		})
-	}
 }
 
 // TestBroadcastBehaviourReportsDroppedBroadcastStart checks that a request to start a
@@ -144,17 +81,17 @@ func TestBroadcastBehaviourReportsDroppedBroadcastStart(t *testing.T) {
 	pool, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, nil)
 	require.NoError(t, err)
 
-	cfg := DefaultBroadcastConfig()
+	cfg := DefaultBroadcastConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 	cfg.QueueCapacity = 1
 
-	b, err := NewPooledBroadcastBehaviour(pool, cfg)
+	b, err := NewPooledBroadcastBehaviour[kadt.Key, kadt.PeerID, *pb.Message](pool, cfg)
 	require.NoError(t, err)
 
 	// take the queue's only place
 	b.Notify(ctx, &EventStopQuery{QueryID: "filler"})
 
-	waiter := NewBroadcastWaiter(1)
-	b.Notify(ctx, &EventStartBroadcast{
+	waiter := NewBroadcastWaiter[kadt.Key, kadt.PeerID, *pb.Message](1)
+	b.Notify(ctx, &EventStartBroadcast[kadt.Key, kadt.PeerID, *pb.Message]{
 		QueryID: "dropped",
 		Target:  nodes[1].NodeID.Key(),
 		Notify:  waiter,

@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
+	"github.com/ipfs/go-libdht/kad"
+
+	"github.com/probe-lab/zikade/internal/coord/coordt"
 )
 
 // ErrEventDropped is the error reported to the caller of an operation whose event was
@@ -228,12 +231,12 @@ func (w *Waiter[E]) Chan() <-chan WaiterEvent[E] {
 }
 
 // A QueryMonitor receives event notifications on the progress of a query
-type QueryMonitor[E TerminalQueryEvent] interface {
+type QueryMonitor[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N], E TerminalQueryEvent] interface {
 	// NotifyProgressed returns a channel that can be used to send notification that a
 	// query has made progress. If the notification cannot be sent then it will be
 	// queued and retried at a later time. If the query completes before the progress
 	// notification can be sent the notification will be discarded.
-	NotifyProgressed() chan<- CtxEvent[*EventQueryProgressed]
+	NotifyProgressed() chan<- CtxEvent[*EventQueryProgressed[K, N, M]]
 
 	// NotifyFinished returns a channel that can be used to send the notification that a
 	// query has completed. It is up to the implemention to ensure that the channel has enough
@@ -246,28 +249,26 @@ type QueryMonitor[E TerminalQueryEvent] interface {
 
 // QueryMonitorHook wraps a [QueryMonitor] interface and provides hooks
 // that are invoked before calls to the QueryMonitor methods are forwarded.
-type QueryMonitorHook[E TerminalQueryEvent] struct {
-	qm               QueryMonitor[E]
+type QueryMonitorHook[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N], E TerminalQueryEvent] struct {
+	qm               QueryMonitor[K, N, M, E]
 	BeforeProgressed func()
 	BeforeFinished   func()
 }
 
-var _ QueryMonitor[*EventQueryFinished] = (*QueryMonitorHook[*EventQueryFinished])(nil)
-
-func NewQueryMonitorHook[E TerminalQueryEvent](qm QueryMonitor[E]) *QueryMonitorHook[E] {
-	return &QueryMonitorHook[E]{
+func NewQueryMonitorHook[K kad.Key[K], N kad.NodeID[K], M coordt.Message[K, N], E TerminalQueryEvent](qm QueryMonitor[K, N, M, E]) *QueryMonitorHook[K, N, M, E] {
+	return &QueryMonitorHook[K, N, M, E]{
 		qm:               qm,
 		BeforeProgressed: func() {},
 		BeforeFinished:   func() {},
 	}
 }
 
-func (n *QueryMonitorHook[E]) NotifyProgressed() chan<- CtxEvent[*EventQueryProgressed] {
+func (n *QueryMonitorHook[K, N, M, E]) NotifyProgressed() chan<- CtxEvent[*EventQueryProgressed[K, N, M]] {
 	n.BeforeProgressed()
 	return n.qm.NotifyProgressed()
 }
 
-func (n *QueryMonitorHook[E]) NotifyFinished() chan<- CtxEvent[E] {
+func (n *QueryMonitorHook[K, N, M, E]) NotifyFinished() chan<- CtxEvent[E] {
 	n.BeforeFinished()
 	return n.qm.NotifyFinished()
 }

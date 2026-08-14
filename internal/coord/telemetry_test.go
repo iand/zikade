@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/probe-lab/zikade/internal/coord/coordt"
+	"github.com/probe-lab/zikade/internal/coord/cplutil"
 	"github.com/probe-lab/zikade/internal/kadtest"
 	"github.com/probe-lab/zikade/internal/nettest"
 	"github.com/probe-lab/zikade/kadt"
@@ -81,10 +82,10 @@ func TestCoordinatorReportsThroughInjectedProvider(t *testing.T) {
 
 	reader := sdkmetric.NewManualReader()
 
-	ccfg := DefaultCoordinatorConfig()
+	ccfg := DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 	ccfg.MeterProvider = sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 
-	c, err := NewCoordinator(nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, ccfg)
+	c, err := NewCoordinator[kadt.Key, kadt.PeerID, *pb.Message](nodes[0].NodeID, nodes[0].Router, nodes[0].RoutingTable, cplutil.GenRandPeerID, ccfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 
