@@ -133,8 +133,21 @@ type QueryBehaviour struct {
 	// pendingInbound is a queue of inbound events that are awaiting processing
 	pendingInbound []CtxEvent[BehaviourEvent]
 
+	// nextDue is the time the query pool last reported it could next make progress
+	// without an event arriving, or the zero time if it reported none.
+	// it must only be accessed while performMu is held
+	nextDue time.Time
+
+	// pollAgain records that the pool reported a query ending rather than a due time, so
+	// nextDue is stale until the pool is advanced again.
+	// it must only be accessed while performMu is held
+	pollAgain bool
+
 	// ready is a channel signaling that the behaviour has work to perform.
 	ready chan struct{}
+
+	// readyTimer signals ready when the pool's next due time arrives.
+	readyTimer *readyTimer
 }
 
 // NewQueryBehaviour initialises a new [QueryBehaviour], setting up the query
@@ -163,6 +176,7 @@ func NewQueryBehaviour(self kadt.PeerID, cfg *QueryConfig) (*QueryBehaviour, err
 		notifiers: make(map[coordt.QueryID]*queryNotifier[*EventQueryFinished]),
 		ready:     make(chan struct{}, 1),
 	}
+	h.readyTimer = newReadyTimer(cfg.Clock, h.ready)
 	return h, err
 }
 
@@ -353,12 +367,11 @@ func (p *QueryBehaviour) perfomNextInbound(ctx context.Context) (BehaviourEvent,
 // response to a ready signal, so without re-signalling here the pool would sit
 // on those nodes until some external event arrived, holding every query to one
 // request in flight regardless of configuration.
+//
+// A behaviour with no work to do arms a timer for the query's next due time.
 func (p *QueryBehaviour) updateReadyStatus(performed bool) {
-	if performed || len(p.pendingOutbound) != 0 {
-		select {
-		case p.ready <- struct{}{}:
-		default:
-		}
+	if performed || p.pollAgain || len(p.pendingOutbound) != 0 {
+		signalReady(p.ready)
 		return
 	}
 
@@ -367,12 +380,11 @@ func (p *QueryBehaviour) updateReadyStatus(performed bool) {
 	p.pendingInboundMu.Unlock()
 
 	if hasPendingInbound {
-		select {
-		case p.ready <- struct{}{}:
-		default:
-		}
+		signalReady(p.ready)
 		return
 	}
+
+	p.readyTimer.Arm(p.nextDue)
 }
 
 // advancePool advances the query pool state machine and returns an outbound event if
@@ -384,6 +396,8 @@ func (p *QueryBehaviour) advancePool(ctx context.Context, now time.Time, ev quer
 		span.SetAttributes(tele.AttrOutEvent(out))
 		span.End()
 	}()
+
+	p.pollAgain = false
 
 	pstate := p.pool.Advance(ctx, now, ev)
 	switch st := pstate.(type) {
@@ -403,15 +417,23 @@ func (p *QueryBehaviour) advancePool(ctx context.Context, now time.Time, ev quer
 		}, true
 	case *query.StatePoolWaitingAtCapacity:
 		// nothing to do except wait for message response or timeout
+		p.nextDue = st.NextDue
 	case *query.StatePoolWaitingWithCapacity:
 		// nothing to do except wait for message response or timeout
+		p.nextDue = st.NextDue
 	case *query.StatePoolQueryFinished[kadt.Key, kadt.PeerID]:
+		// the state carries no due time and the pool has removed the query, so the pool
+		// must be advanced again to report when the remaining queries are next due
+		p.pollAgain = true
 		p.notifyQueryFinished(ctx, &EventQueryFinished{
 			QueryID:      st.QueryID,
 			Stats:        st.Stats,
 			ClosestNodes: st.ClosestNodes,
 		})
 	case *query.StatePoolQueryTimeout:
+		// the state carries no due time and the pool has removed the query, so the pool
+		// must be advanced again to report when the remaining queries are next due
+		p.pollAgain = true
 		p.notifyQueryFinished(ctx, &EventQueryFinished{
 			QueryID: st.QueryID,
 			Stats:   st.Stats,
@@ -419,6 +441,7 @@ func (p *QueryBehaviour) advancePool(ctx context.Context, now time.Time, ev quer
 		})
 	case *query.StatePoolIdle:
 		// nothing to do
+		p.nextDue = st.NextDue
 	default:
 		panic(fmt.Sprintf("unexpected pool state: %T", st))
 	}
@@ -427,9 +450,7 @@ func (p *QueryBehaviour) advancePool(ctx context.Context, now time.Time, ev quer
 }
 
 // notifyQueryFinished tells the query's waiter that the query has ended and releases the
-// notifier held for it. The query pool has already forgotten the query by this point, so
-// failing to release the notifier here would leave the waiter blocked and the map entry in
-// place for the lifetime of the behaviour.
+// notifier held for it.
 func (p *QueryBehaviour) notifyQueryFinished(ctx context.Context, ev *EventQueryFinished) {
 	waiter, ok := p.notifiers[ev.QueryID]
 	if !ok {

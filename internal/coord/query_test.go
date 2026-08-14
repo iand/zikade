@@ -367,7 +367,7 @@ func TestQueryBehaviourNotifiesQueryTimeout(t *testing.T) {
 	require.ErrorIs(t, wev.Event.Err, coordt.ErrQueryTimeout)
 	require.Equal(t, coordt.QueryID("test"), wev.Event.QueryID)
 
-	// the notifier is not retained for a query the pool has forgotten
+	// the notifier is not retained for a query the pool has removed
 	require.Empty(t, b.notifiers)
 }
 

@@ -2,8 +2,11 @@ package coord
 
 import (
 	"context"
+	"slices"
+	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/require"
@@ -263,5 +266,100 @@ func TestIncludeNode(t *testing.T) {
 
 		// the routing table should now contain the node
 		require.True(t, d.IsRoutable(ctx, candidate))
+	})
+}
+
+// silentRouter accepts requests but never answers them, blocking each caller until the
+// request context is cancelled. It records the peers it was asked to contact.
+type silentRouter struct {
+	mu        sync.Mutex
+	contacted []kadt.PeerID
+}
+
+var _ coordt.Router[kadt.Key, kadt.PeerID, *pb.Message] = (*silentRouter)(nil)
+
+func (r *silentRouter) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Message) (*pb.Message, error) {
+	r.record(to)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (r *silentRouter) GetClosestNodes(ctx context.Context, to kadt.PeerID, target kadt.Key) ([]kadt.PeerID, error) {
+	r.record(to)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (r *silentRouter) record(to kadt.PeerID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.contacted = append(r.contacted, to)
+}
+
+func (r *silentRouter) contacts() []kadt.PeerID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.contacted)
+}
+
+// TestCoordinatorTimesOutIdleQuery checks that a query whose only node never answers is
+// ended by its request timeout rather than left waiting for a response.
+func TestCoordinatorTimesOutIdleQuery(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := kadtest.CtxBubble(t)
+
+		_, nodes, err := nettest.LinearTopology(2, clock.New())
+		require.NoError(t, err)
+
+		ccfg := DefaultCoordinatorConfig()
+		ccfg.Query.RequestTimeout = 2 * time.Second
+		ccfg.Query.Timeout = 4 * time.Second
+
+		rtr := &silentRouter{}
+
+		c, err := NewCoordinator(nodes[0].NodeID, rtr, nodes[0].RoutingTable, ccfg)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, c.Close()) })
+
+		qfn := func(ctx context.Context, id kadt.PeerID, msg *pb.Message, stats coordt.QueryStats) error {
+			return nil
+		}
+
+		start := time.Now()
+		_, _, err = c.QueryClosest(ctx, nodes[1].NodeID.Key(), qfn, 20)
+		require.NoError(t, err)
+
+		require.Equal(t, []kadt.PeerID{nodes[1].NodeID}, rtr.contacts())
+
+		if elapsed := time.Since(start); elapsed < ccfg.Query.RequestTimeout {
+			t.Errorf("query ended after %s, want at least %s", elapsed, ccfg.Query.RequestTimeout)
+		}
+	})
+}
+
+// TestCoordinatorExploresOnSchedule checks that a coordinator that is told to do nothing
+// still explores its routing table when the first cpl in its schedule falls due.
+func TestCoordinatorExploresOnSchedule(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, nodes, err := nettest.LinearTopology(2, clock.New())
+		require.NoError(t, err)
+
+		ccfg := DefaultCoordinatorConfig()
+		ccfg.Routing.ExploreInterval = 2 * time.Second
+
+		rtr := &silentRouter{}
+
+		c, err := NewCoordinator(nodes[0].NodeID, rtr, nodes[0].RoutingTable, ccfg)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, c.Close()) })
+
+		// no query or bootstrap is started, so any request the router sees must come from
+		// an explore of the routing table
+		require.Empty(t, rtr.contacts())
+
+		time.Sleep(2 * ccfg.Routing.ExploreInterval)
+		synctest.Wait()
+
+		require.Equal(t, []kadt.PeerID{nodes[1].NodeID}, rtr.contacts())
 	})
 }

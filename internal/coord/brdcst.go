@@ -46,7 +46,20 @@ type PooledBroadcastBehaviour struct {
 	// pendingInbound is a queue of inbound events that are awaiting processing
 	pendingInbound []CtxEvent[BehaviourEvent]
 
+	// nextDue is the time the broadcast pool last reported it could next make progress
+	// without an event arriving, or the zero time if it reported none.
+	// it must only be accessed while performMu is held
+	nextDue time.Time
+
+	// pollAgain records that the pool reported a broadcast ending rather than a due time,
+	// so nextDue is stale until the pool is advanced again.
+	// it must only be accessed while performMu is held
+	pollAgain bool
+
 	ready chan struct{}
+
+	// readyTimer signals ready when the pool's next due time arrives.
+	readyTimer *readyTimer
 }
 
 var _ Behaviour[BehaviourEvent, BehaviourEvent] = (*PooledBroadcastBehaviour)(nil)
@@ -60,6 +73,7 @@ func NewPooledBroadcastBehaviour(brdcstPool *brdcst.Pool[kadt.Key, kadt.PeerID, 
 		logger:    logger.With("behaviour", "pooledBroadcast"),
 		tracer:    tracer,
 	}
+	b.readyTimer = newReadyTimer(clk, b.ready)
 	return b
 }
 
@@ -148,12 +162,11 @@ func (b *PooledBroadcastBehaviour) nextPendingInbound() (CtxEvent[BehaviourEvent
 // The event loop only calls Perform in response to a ready signal, so without
 // re-signalling here a broadcast would contact one node and then wait for that
 // node's response before contacting the next.
+//
+// A behaviour with no work to do arms a timer for the broadcast's next due time.
 func (b *PooledBroadcastBehaviour) updateReadyStatus(performed bool) {
-	if performed || len(b.pendingOutbound) != 0 {
-		select {
-		case b.ready <- struct{}{}:
-		default:
-		}
+	if performed || b.pollAgain || len(b.pendingOutbound) != 0 {
+		signalReady(b.ready)
 		return
 	}
 
@@ -162,12 +175,11 @@ func (b *PooledBroadcastBehaviour) updateReadyStatus(performed bool) {
 	b.pendingInboundMu.Unlock()
 
 	if hasPendingInbound {
-		select {
-		case b.ready <- struct{}{}:
-		default:
-		}
+		signalReady(b.ready)
 		return
 	}
+
+	b.readyTimer.Arm(b.nextDue)
 }
 
 func (b *PooledBroadcastBehaviour) perfomNextInbound(ctx context.Context) (BehaviourEvent, bool) {
@@ -290,10 +302,16 @@ func (b *PooledBroadcastBehaviour) advancePool(ctx context.Context, now time.Tim
 		span.End()
 	}()
 
+	b.pollAgain = false
+
 	pstate := b.pool.Advance(ctx, now, ev)
 	switch st := pstate.(type) {
 	case *brdcst.StatePoolIdle:
 		// nothing to do
+		b.nextDue = time.Time{}
+	case *brdcst.StatePoolWaiting:
+		// nothing to do except wait for message responses or timeouts
+		b.nextDue = st.NextDue
 	case *brdcst.StatePoolFindCloser[kadt.Key, kadt.PeerID]:
 		return &EventOutboundGetCloserNodes{
 			QueryID: st.QueryID,
@@ -309,6 +327,9 @@ func (b *PooledBroadcastBehaviour) advancePool(ctx context.Context, now time.Tim
 			Notify:  b,
 		}, true
 	case *brdcst.StatePoolBroadcastFinished[kadt.Key, kadt.PeerID]:
+		// the state carries no due time and the pool has removed the broadcast, so the
+		// pool must be advanced again to report when the remaining broadcasts are next due
+		b.pollAgain = true
 		waiter, ok := b.notifiers[st.QueryID]
 		if ok {
 			waiter.NotifyFinished(ctx, &EventBroadcastFinished{

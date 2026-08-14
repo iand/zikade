@@ -4,6 +4,9 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/benbjohnson/clock"
 )
 
 // Notify is the interface that a components to implement to be notified of
@@ -25,6 +28,9 @@ func (f NotifyFunc[E]) Notify(ctx context.Context, ev E) {
 
 type Behaviour[I BehaviourEvent, O BehaviourEvent] interface {
 	// Ready returns a channel that signals when the behaviour is ready to perform work.
+	// A behaviour must signal whenever it has work available, including work that has
+	// become available through the passage of time rather than through an event. It may
+	// signal when it has none.
 	Ready() <-chan struct{}
 
 	// Notify informs the behaviour of an event. The behaviour may perform the event
@@ -35,6 +41,73 @@ type Behaviour[I BehaviourEvent, O BehaviourEvent] interface {
 	// Perform gives the behaviour the opportunity to perform work or to return a queued
 	// result as an event.
 	Perform(ctx context.Context) (O, bool)
+}
+
+// signalReady tells a behaviour's client that the behaviour has work to perform. The
+// send is non-blocking, so a signal already waiting is left in place.
+func signalReady(ready chan<- struct{}) {
+	select {
+	case ready <- struct{}{}:
+	default:
+	}
+}
+
+// earlier returns the earlier of two due times, treating the zero time as "no time
+// scheduled" rather than as the earliest possible instant. It returns the zero time
+// only when both arguments are zero.
+func earlier(a, b time.Time) time.Time {
+	switch {
+	case a.IsZero():
+		return b
+	case b.IsZero():
+		return a
+	case b.Before(a):
+		return b
+	default:
+		return a
+	}
+}
+
+// A readyTimer signals a behaviour's ready channel when a deadline held inside the
+// behaviour's state machines falls due. It must only be armed from inside the lock that
+// guards the behaviour's state.
+type readyTimer struct {
+	clk   clock.Clock
+	ready chan struct{}
+	timer *clock.Timer
+}
+
+func newReadyTimer(clk clock.Clock, ready chan struct{}) *readyTimer {
+	return &readyTimer{
+		clk:   clk,
+		ready: ready,
+	}
+}
+
+// Arm schedules a ready signal for the given time, replacing any signal already
+// scheduled. The zero time disarms the timer.
+func (t *readyTimer) Arm(due time.Time) {
+	if due.IsZero() {
+		t.Disarm()
+		return
+	}
+
+	// A state machine treats a deadline as expired only once the clock is strictly past
+	// it, so the signal is scheduled at least a nanosecond out.
+	d := max(due.Sub(t.clk.Now()), time.Nanosecond)
+
+	if t.timer == nil {
+		t.timer = t.clk.AfterFunc(d, func() { signalReady(t.ready) })
+		return
+	}
+	t.timer.Reset(d)
+}
+
+// Disarm cancels any scheduled ready signal. A signal already sent is not withdrawn.
+func (t *readyTimer) Disarm() {
+	if t.timer != nil {
+		t.timer.Stop()
+	}
 }
 
 type WorkQueueFunc[E BehaviourEvent] func(context.Context, E) bool

@@ -319,7 +319,24 @@ type RoutingBehaviour struct {
 	// pendingInbound is a queue of inbound events that are awaiting processing
 	pendingInbound []CtxEvent[BehaviourEvent]
 
+	// bootstrapDue, includeDue, probeDue and exploreDue hold the time each child state
+	// machine last reported it could next make progress without an event arriving, or the
+	// zero time if it reported none. Each is written only when its own child is advanced.
+	// they must only be accessed while performMu is held
+	bootstrapDue time.Time
+	includeDue   time.Time
+	probeDue     time.Time
+	exploreDue   time.Time
+
+	// pollAgain records that a child reported the end of its work rather than a due time,
+	// so the recorded due times are stale until the children are polled again.
+	// it must only be accessed while performMu is held
+	pollAgain bool
+
 	ready chan struct{}
+
+	// readyTimer signals ready when the earliest of the children's due times arrives.
+	readyTimer *readyTimer
 }
 
 func NewRoutingBehaviour(self kadt.PeerID, rt routing.RoutingTableCpl[kadt.Key, kadt.PeerID], cfg *RoutingConfig) (*RoutingBehaviour, error) {
@@ -410,6 +427,12 @@ func ComposeRoutingBehaviour(
 		explore:   explore,
 		ready:     make(chan struct{}, 1),
 	}
+	r.readyTimer = newReadyTimer(cfg.Clock, r.ready)
+
+	// The explore schedule is already running, so signal ready once to get the Perform
+	// that arms a timer for it. Otherwise a node that is never notified never explores.
+	signalReady(r.ready)
+
 	return r, nil
 }
 
@@ -481,12 +504,12 @@ func (r *RoutingBehaviour) nextPendingOutbound() (BehaviourEvent, bool) {
 // in response to a ready signal, so without re-signalling here the children
 // would sit on those seeds until some external event arrived, holding them to
 // one request in flight regardless of configuration.
+//
+// A behaviour with no work to do arms a timer for the earliest of its children's next
+// due times.
 func (r *RoutingBehaviour) updateReadyStatus(performed bool) {
-	if performed || len(r.pendingOutbound) != 0 {
-		select {
-		case r.ready <- struct{}{}:
-		default:
-		}
+	if performed || r.pollAgain || len(r.pendingOutbound) != 0 {
+		signalReady(r.ready)
 		return
 	}
 
@@ -495,12 +518,19 @@ func (r *RoutingBehaviour) updateReadyStatus(performed bool) {
 	r.pendingInboundMu.Unlock()
 
 	if hasPendingInbound {
-		select {
-		case r.ready <- struct{}{}:
-		default:
-		}
+		signalReady(r.ready)
 		return
 	}
+
+	r.readyTimer.Arm(r.nextDue())
+}
+
+// nextDue returns the earliest time at which advancing any child state machine could
+// make progress without an event arriving, or the zero time if there is no such time.
+func (r *RoutingBehaviour) nextDue() time.Time {
+	due := earlier(r.bootstrapDue, r.includeDue)
+	due = earlier(due, r.probeDue)
+	return earlier(due, r.exploreDue)
 }
 
 func (r *RoutingBehaviour) nextPendingInbound() (CtxEvent[BehaviourEvent], bool) {
@@ -703,6 +733,8 @@ func (r *RoutingBehaviour) pollChildren(ctx context.Context) {
 	// every state machine advanced for this poll sees the same instant
 	now := r.cfg.Clock.Now()
 
+	r.pollAgain = false
+
 	ev, ok := r.advanceBootstrap(ctx, now, &routing.EventBootstrapPoll{})
 	if ok {
 		r.pendingOutbound = append(r.pendingOutbound, ev)
@@ -740,13 +772,21 @@ func (r *RoutingBehaviour) advanceBootstrap(ctx context.Context, now time.Time, 
 
 	case *routing.StateBootstrapWaiting:
 		// bootstrap waiting for a message response, nothing to do
+		r.bootstrapDue = st.NextDue
 	case *routing.StateBootstrapFinished:
 		r.cfg.Logger.Debug("bootstrap finished", slog.Duration("elapsed", st.Stats.End.Sub(st.Stats.Start)), slog.Int("requests", st.Stats.Requests), slog.Int("failures", st.Stats.Failure))
+		r.bootstrapDue = time.Time{}
 		return &EventBootstrapFinished{
 			Stats: st.Stats,
 		}, true
+	case *routing.StateBootstrapTimeout:
+		// the bootstrap does not release its query when it passes its deadline, so it
+		// reports this state again on every advance and no due time is recorded
+		r.cfg.Logger.Debug("bootstrap timed out", slog.Int("requests", st.Stats.Requests), slog.Int("failures", st.Stats.Failure))
+		r.bootstrapDue = time.Time{}
 	case *routing.StateBootstrapIdle:
 		// bootstrap not running, nothing to do
+		r.bootstrapDue = time.Time{}
 	default:
 		panic(fmt.Sprintf("unexpected bootstrap state: %T", st))
 	}
@@ -787,12 +827,16 @@ func (r *RoutingBehaviour) advanceInclude(ctx context.Context, now time.Time, ev
 		}, true
 	case *routing.StateIncludeWaitingAtCapacity:
 		// nothing to do except wait for message response or timeout
+		r.includeDue = st.NextDue
 	case *routing.StateIncludeWaitingWithCapacity:
 		// nothing to do except wait for message response or timeout
+		r.includeDue = st.NextDue
 	case *routing.StateIncludeWaitingFull:
 		// nothing to do except wait for message response or timeout
+		r.includeDue = st.NextDue
 	case *routing.StateIncludeIdle:
 		// nothing to do except wait for new nodes to be added to queue
+		r.includeDue = time.Time{}
 	default:
 		panic(fmt.Sprintf("unexpected include state: %T", st))
 	}
@@ -831,12 +875,15 @@ func (r *RoutingBehaviour) advanceProbe(ctx context.Context, now time.Time, ev r
 	case *routing.StateProbeWaitingAtCapacity:
 		// the probe state machine is waiting for responses for checks and the maximum number of concurrent checks has been reached.
 		// nothing to do except wait for message response or timeout
+		r.probeDue = st.NextDue
 	case *routing.StateProbeWaitingWithCapacity:
 		// the probe state machine is waiting for responses for checks but has capacity to perform more
 		// nothing to do except wait for message response or timeout
+		r.probeDue = st.NextDue
 	case *routing.StateProbeIdle:
 		// the probe state machine is not running any checks.
 		// nothing to do except wait for message response or timeout
+		r.probeDue = st.NextDue
 	default:
 		panic(fmt.Sprintf("unexpected include state: %T", st))
 	}
@@ -861,14 +908,23 @@ func (r *RoutingBehaviour) advanceExplore(ctx context.Context, now time.Time, ev
 
 	case *routing.StateExploreWaiting:
 		// explore waiting for a message response, nothing to do
+		r.exploreDue = st.NextDue
 	case *routing.StateExploreQueryFinished:
-		// nothing to do except notify via telemetry
+		// nothing to do except notify via telemetry. The explore has released its query,
+		// so it must be advanced again to report when the next cpl falls due.
+		r.pollAgain = true
 	case *routing.StateExploreQueryTimeout:
-		// nothing to do except notify via telemetry
+		// nothing to do except notify via telemetry. The explore has released its query,
+		// so it must be advanced again to report when the next cpl falls due.
+		r.pollAgain = true
 	case *routing.StateExploreFailure:
+		// the failed cpl has been rescheduled, so the explore must be advanced again to
+		// report when the next cpl falls due
 		r.cfg.Logger.Warn("explore failure", slog.Int("cpl", st.Cpl), tele.LogAttrError(st.Error))
+		r.pollAgain = true
 	case *routing.StateExploreIdle:
 		// bootstrap not running, nothing to do
+		r.exploreDue = st.NextDue
 	default:
 		panic(fmt.Sprintf("unexpected explore state: %T", st))
 	}
