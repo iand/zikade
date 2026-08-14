@@ -39,6 +39,9 @@ type Bootstrap[K kad.Key[K], N kad.NodeID[K]] struct {
 	// counterFindFailed is a counter that tracks the number of requests to find closer nodes that failed.
 	counterFindFailed metric.Int64Counter
 
+	// counterFailed is a counter that tracks the number of bootstraps that ended without completing.
+	counterFailed metric.Int64Counter
+
 	// gaugeRunning is a gauge that tracks whether the bootstrap is running.
 	gaugeRunning metric.Int64ObservableGauge
 
@@ -149,6 +152,14 @@ func NewBootstrap[K kad.Key[K], N kad.NodeID[K]](self N, cfg *BootstrapConfig) (
 		return nil, fmt.Errorf("create bootstrap_find_failed counter: %w", err)
 	}
 
+	b.counterFailed, err = cfg.Meter.Int64Counter(
+		"bootstrap_failed",
+		metric.WithDescription("Total number of bootstraps that ended without completing"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create bootstrap_failed counter: %w", err)
+	}
+
 	b.gaugeRunning, err = cfg.Meter.Int64ObservableGauge(
 		"bootstrap_running",
 		metric.WithDescription("Whether or not the bootstrap is running"),
@@ -253,6 +264,7 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, now time.Time, qev q
 	case *query.StateQueryWaitingAtCapacity:
 		if now.After(st.Deadline) {
 			b.counterFindFailed.Add(ctx, 1)
+			b.counterFailed.Add(ctx, 1)
 			span.SetAttributes(attribute.String("out_state", "StateBootstrapTimeout"))
 			b.qry = nil
 			return &StateBootstrapTimeout{
@@ -267,6 +279,7 @@ func (b *Bootstrap[K, N]) advanceQuery(ctx context.Context, now time.Time, qev q
 	case *query.StateQueryWaitingWithCapacity:
 		if now.After(st.Deadline) {
 			b.counterFindFailed.Add(ctx, 1)
+			b.counterFailed.Add(ctx, 1)
 			span.SetAttributes(attribute.String("out_state", "StateBootstrapTimeout"))
 			b.qry = nil
 			return &StateBootstrapTimeout{
