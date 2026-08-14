@@ -29,6 +29,10 @@ type EventBroadcastFinished struct {
 		Node kadt.PeerID
 		Err  error
 	}
+
+	// Err records why the broadcast ended when it ended without being attempted, and is
+	// nil otherwise. A broadcast that ran records per node outcomes in Errors instead.
+	Err error
 }
 
 func (*EventBroadcastFinished) behaviourEvent()     {}

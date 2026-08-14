@@ -2,11 +2,73 @@ package coord
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/benbjohnson/clock"
 )
+
+// ErrEventDropped is the error reported to the caller of an operation whose event was
+// dropped because the behaviour that would have carried it out had no queue space.
+var ErrEventDropped = errors.New("event dropped")
+
+// inboundQueue is a bounded queue of events awaiting processing by a behaviour. Events
+// arrive from goroutines other than the one that drains them, so every method is safe to
+// call concurrently.
+type inboundQueue struct {
+	mu       sync.Mutex
+	events   []CtxEvent[BehaviourEvent]
+	capacity int
+
+	// depth holds the number of queued events so that a metric callback can read it
+	// without taking the lock.
+	depth atomic.Int64
+}
+
+func newInboundQueue(capacity int) *inboundQueue {
+	return &inboundQueue{
+		events:   make([]CtxEvent[BehaviourEvent], 0, capacity),
+		capacity: capacity,
+	}
+}
+
+// enqueue adds an event to the back of the queue, reporting whether there was room for it.
+func (q *inboundQueue) enqueue(ce CtxEvent[BehaviourEvent]) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(q.events) >= q.capacity {
+		return false
+	}
+
+	q.events = append(q.events, ce)
+	q.depth.Store(int64(len(q.events)))
+
+	return true
+}
+
+// dequeue removes the event at the front of the queue, reporting whether there was one.
+func (q *inboundQueue) dequeue() (CtxEvent[BehaviourEvent], bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(q.events) == 0 {
+		return CtxEvent[BehaviourEvent]{}, false
+	}
+
+	var ce CtxEvent[BehaviourEvent]
+	ce, q.events = q.events[0], q.events[1:]
+	q.depth.Store(int64(len(q.events)))
+
+	return ce, true
+}
+
+// empty reports whether the queue holds no events.
+func (q *inboundQueue) empty() bool {
+	return q.depth.Load() == 0
+}
 
 // Notify is the interface that a components to implement to be notified of
 // [BehaviourEvent]'s.

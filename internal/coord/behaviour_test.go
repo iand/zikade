@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
+	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/internal/coord/cplutil"
 	"github.com/probe-lab/zikade/internal/coord/query"
 	"github.com/probe-lab/zikade/internal/coord/routing"
@@ -16,7 +17,6 @@ import (
 	"github.com/probe-lab/zikade/internal/nettest"
 	"github.com/probe-lab/zikade/kadt"
 	"github.com/probe-lab/zikade/pb"
-	"github.com/probe-lab/zikade/tele"
 )
 
 type RecordingSM[E any, S any] struct {
@@ -104,7 +104,13 @@ func newTestBroadcastBehaviour(t *testing.T, clk clock.Clock, self kadt.PeerID) 
 	pool, err := brdcst.NewPool[kadt.Key, kadt.PeerID, *pb.Message](self, nil)
 	require.NoError(t, err)
 
-	return NewPooledBroadcastBehaviour(pool, clk, tele.DefaultLogger("coord"), tele.NoopTracer())
+	bcfg := DefaultBroadcastConfig()
+	bcfg.Clock = clk
+
+	b, err := NewPooledBroadcastBehaviour(pool, bcfg)
+	require.NoError(t, err)
+
+	return b
 }
 
 // buildWaitingQueryBehaviour returns a builder for a query behaviour running a query
@@ -383,4 +389,39 @@ func DrainBehaviour[I BehaviourEvent, O BehaviourEvent](t *testing.T, ctx contex
 			return
 		}
 	}
+}
+
+// TestInboundQueueBoundsItsLength checks that an inbound queue accepts events up to its
+// capacity, refuses them beyond it, and makes room again as they are dequeued.
+func TestInboundQueueBoundsItsLength(t *testing.T) {
+	q := newInboundQueue(2)
+	require.True(t, q.empty())
+
+	require.True(t, q.enqueue(CtxEvent[BehaviourEvent]{Event: &EventStopQuery{QueryID: "a"}}))
+	require.True(t, q.enqueue(CtxEvent[BehaviourEvent]{Event: &EventStopQuery{QueryID: "b"}}))
+	require.False(t, q.enqueue(CtxEvent[BehaviourEvent]{Event: &EventStopQuery{QueryID: "c"}}))
+
+	require.False(t, q.empty())
+	require.Equal(t, int64(2), q.depth.Load())
+
+	ce, ok := q.dequeue()
+	require.True(t, ok)
+	require.Equal(t, coordt.QueryID("a"), ce.Event.(*EventStopQuery).QueryID)
+	require.Equal(t, int64(1), q.depth.Load())
+
+	// the space freed by the dequeue is available again
+	require.True(t, q.enqueue(CtxEvent[BehaviourEvent]{Event: &EventStopQuery{QueryID: "d"}}))
+
+	ce, ok = q.dequeue()
+	require.True(t, ok)
+	require.Equal(t, coordt.QueryID("b"), ce.Event.(*EventStopQuery).QueryID)
+
+	ce, ok = q.dequeue()
+	require.True(t, ok)
+	require.Equal(t, coordt.QueryID("d"), ce.Event.(*EventStopQuery).QueryID)
+
+	_, ok = q.dequeue()
+	require.False(t, ok)
+	require.True(t, q.empty())
+	require.Zero(t, q.depth.Load())
 }

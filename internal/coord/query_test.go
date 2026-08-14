@@ -2,6 +2,7 @@ package coord
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -549,4 +550,62 @@ func TestQuery_deadlock_regression(t *testing.T) {
 	// would happen if either direction waited for the other
 	kadtest.AssertClosed(t, ctx, waiterDone)
 	require.NoError(t, waitErr)
+}
+
+// TestQueryBehaviourReportsDroppedQueryStart checks that a request to start a query that
+// finds no room in the behaviour's inbound queue is reported to its caller as a finished
+// query carrying ErrEventDropped. The caller waits on the monitor for a terminal event, so
+// dropping the request silently would leave it waiting until its context expired.
+func TestQueryBehaviourReportsDroppedQueryStart(t *testing.T) {
+	ctx := kadtest.CtxShort(t)
+
+	_, nodes, err := nettest.LinearTopology(2, clock.New())
+	require.NoError(t, err)
+
+	cfg := DefaultQueryConfig()
+	cfg.QueueCapacity = 1
+
+	b, err := NewQueryBehaviour(nodes[0].NodeID, cfg)
+	require.NoError(t, err)
+
+	// take the queue's only place
+	b.Notify(ctx, &EventStopQuery{QueryID: "filler"})
+
+	waiter := NewQueryWaiter(1)
+	b.Notify(ctx, &EventStartFindCloserQuery{
+		QueryID: "dropped",
+		Target:  nodes[1].NodeID.Key(),
+		Notify:  waiter,
+	})
+
+	select {
+	case wev := <-waiter.Finished():
+		require.ErrorIs(t, wev.Event.Err, ErrEventDropped)
+		require.Equal(t, coordt.QueryID("dropped"), wev.Event.QueryID)
+	default:
+		t.Fatal("caller was not told the query had been dropped")
+	}
+
+	require.Equal(t, int64(1), b.inbound.depth.Load())
+}
+
+// TestQueryBehaviourBoundsItsInboundQueue checks that the inbound queue never grows past its
+// configured capacity however many events arrive.
+func TestQueryBehaviourBoundsItsInboundQueue(t *testing.T) {
+	ctx := kadtest.CtxShort(t)
+
+	_, nodes, err := nettest.LinearTopology(2, clock.New())
+	require.NoError(t, err)
+
+	cfg := DefaultQueryConfig()
+	cfg.QueueCapacity = 4
+
+	b, err := NewQueryBehaviour(nodes[0].NodeID, cfg)
+	require.NoError(t, err)
+
+	for i := range 20 {
+		b.Notify(ctx, &EventStopQuery{QueryID: coordt.QueryID(fmt.Sprintf("q%d", i))})
+	}
+
+	require.Equal(t, int64(cfg.QueueCapacity), b.inbound.depth.Load())
 }

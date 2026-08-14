@@ -44,6 +44,12 @@ type RoutingConfig struct {
 	// Meter is the meter that should be used to record metrics.
 	Meter metric.Meter
 
+	// QueueCapacity is the maximum number of events that may be waiting to be processed by
+	// the behaviour. Events arriving when the queue is full are dropped. It must be larger
+	// than [NetworkConfig.Capacity], since a node handler queues a response here before
+	// releasing the capacity it held, so that many responses can be waiting at once.
+	QueueCapacity int
+
 	// BootstrapTimeout is the time the behaviour should wait before terminating a bootstrap if it is not making progress.
 	BootstrapTimeout time.Duration
 
@@ -138,6 +144,13 @@ func (cfg *RoutingConfig) Validate() error {
 		return &errs.ConfigurationError{
 			Component: "RoutingConfig",
 			Err:       fmt.Errorf("meter must not be nil"),
+		}
+	}
+
+	if cfg.QueueCapacity < 1 {
+		return &errs.ConfigurationError{
+			Component: "RoutingConfig",
+			Err:       fmt.Errorf("queue capacity must be greater than zero"),
 		}
 	}
 
@@ -285,6 +298,8 @@ func DefaultRoutingConfig() *RoutingConfig {
 		Tracer: tele.NoopTracer(),
 		Meter:  tele.NoopMeter(),
 
+		QueueCapacity: 1024, // MAGIC
+
 		BootstrapTimeout:            5 * time.Minute, // MAGIC
 		BootstrapRequestConcurrency: 3,               // MAGIC
 		BootstrapRequestTimeout:     time.Minute,     // MAGIC
@@ -341,11 +356,14 @@ type RoutingBehaviour struct {
 	// it must only be accessed while performMu is held
 	pendingOutbound []BehaviourEvent
 
-	// pendingInboundMu guards access to pendingInbound
-	pendingInboundMu sync.Mutex
+	// inbound is a bounded queue of inbound events that are awaiting processing
+	inbound *inboundQueue
 
-	// pendingInbound is a queue of inbound events that are awaiting processing
-	pendingInbound []CtxEvent[BehaviourEvent]
+	// counterInboundDropped counts the events dropped because the inbound queue was full.
+	counterInboundDropped metric.Int64Counter
+
+	// gaugeInboundDepth tracks the number of events waiting in the inbound queue.
+	gaugeInboundDepth metric.Int64ObservableGauge
 
 	// bootstrapDue, includeDue, probeDue and exploreDue hold the time each child state
 	// machine last reported it could next make progress without an event arriving, or the
@@ -455,8 +473,32 @@ func ComposeRoutingBehaviour(
 		include:   include,
 		probe:     probe,
 		explore:   explore,
+		inbound:   newInboundQueue(cfg.QueueCapacity),
 		ready:     make(chan struct{}, 1),
 	}
+
+	var err error
+
+	r.counterInboundDropped, err = cfg.Meter.Int64Counter(
+		"routing_inbound_events_dropped",
+		metric.WithDescription("Total number of events dropped because the routing behaviour's inbound queue was full"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create routing_inbound_events_dropped counter: %w", err)
+	}
+
+	r.gaugeInboundDepth, err = cfg.Meter.Int64ObservableGauge(
+		"routing_inbound_queue_depth",
+		metric.WithDescription("Number of events waiting in the routing behaviour's inbound queue"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			o.Observe(r.inbound.depth.Load())
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create routing_inbound_queue_depth gauge: %w", err)
+	}
+
 	r.readyTimer = newReadyTimer(cfg.Clock, r.ready)
 
 	// The explore schedule is already running, so signal ready once to get the Perform
@@ -467,13 +509,16 @@ func ComposeRoutingBehaviour(
 }
 
 func (r *RoutingBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
-	r.pendingInboundMu.Lock()
-	defer r.pendingInboundMu.Unlock()
-
 	ctx, span := r.cfg.Tracer.Start(ctx, "RoutingBehaviour.Notify")
 	defer span.End()
 
-	r.pendingInbound = append(r.pendingInbound, CtxEvent[BehaviourEvent]{Ctx: ctx, Event: ev})
+	// No routing event has a caller waiting on it, so a drop needs no report beyond the
+	// counter: the work it would have done is either retried or not needed.
+	if !r.inbound.enqueue(CtxEvent[BehaviourEvent]{Ctx: ctx, Event: ev}) {
+		r.counterInboundDropped.Add(ctx, 1)
+		r.cfg.Logger.Debug("dropped inbound event", slog.String("event", fmt.Sprintf("%T", ev)))
+		return
+	}
 
 	select {
 	case r.ready <- struct{}{}:
@@ -543,11 +588,7 @@ func (r *RoutingBehaviour) updateReadyStatus(performed bool) {
 		return
 	}
 
-	r.pendingInboundMu.Lock()
-	hasPendingInbound := len(r.pendingInbound) != 0
-	r.pendingInboundMu.Unlock()
-
-	if hasPendingInbound {
+	if !r.inbound.empty() {
 		signalReady(r.ready)
 		return
 	}
@@ -564,14 +605,7 @@ func (r *RoutingBehaviour) nextDue() time.Time {
 }
 
 func (r *RoutingBehaviour) nextPendingInbound() (CtxEvent[BehaviourEvent], bool) {
-	r.pendingInboundMu.Lock()
-	defer r.pendingInboundMu.Unlock()
-	if len(r.pendingInbound) == 0 {
-		return CtxEvent[BehaviourEvent]{}, false
-	}
-	var pev CtxEvent[BehaviourEvent]
-	pev, r.pendingInbound = r.pendingInbound[0], r.pendingInbound[1:]
-	return pev, true
+	return r.inbound.dequeue()
 }
 
 func (r *RoutingBehaviour) perfomNextInbound() (BehaviourEvent, bool) {

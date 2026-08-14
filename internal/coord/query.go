@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/probe-lab/zikade/errs"
@@ -27,6 +28,15 @@ type QueryConfig struct {
 
 	// Tracer is the tracer that should be used to trace execution.
 	Tracer trace.Tracer
+
+	// Meter is the meter that should be used to record metrics.
+	Meter metric.Meter
+
+	// QueueCapacity is the maximum number of events that may be waiting to be processed by
+	// the behaviour. Events arriving when the queue is full are dropped. It must be larger
+	// than [NetworkConfig.Capacity], since a node handler queues a response here before
+	// releasing the capacity it held, so that many responses can be waiting at once.
+	QueueCapacity int
 
 	// Concurrency is the maximum number of queries that may be waiting for message responses at any one time.
 	Concurrency int
@@ -61,6 +71,20 @@ func (cfg *QueryConfig) Validate() error {
 		return &errs.ConfigurationError{
 			Component: "PooledQueryConfig",
 			Err:       fmt.Errorf("tracer must not be nil"),
+		}
+	}
+
+	if cfg.Meter == nil {
+		return &errs.ConfigurationError{
+			Component: "PooledQueryConfig",
+			Err:       fmt.Errorf("meter must not be nil"),
+		}
+	}
+
+	if cfg.QueueCapacity < 1 {
+		return &errs.ConfigurationError{
+			Component: "PooledQueryConfig",
+			Err:       fmt.Errorf("queue capacity must be greater than zero"),
 		}
 	}
 
@@ -99,6 +123,8 @@ func DefaultQueryConfig() *QueryConfig {
 		Clock:              clock.New(),
 		Logger:             tele.DefaultLogger("coord"),
 		Tracer:             tele.NoopTracer(),
+		Meter:              tele.NoopMeter(),
+		QueueCapacity:      1024,            // MAGIC
 		Concurrency:        3,               // MAGIC
 		Timeout:            5 * time.Minute, // MAGIC
 		RequestConcurrency: 3,               // MAGIC
@@ -127,11 +153,14 @@ type QueryBehaviour struct {
 	// it must only be accessed while performMu is held
 	pendingOutbound []BehaviourEvent
 
-	// pendingInboundMu guards access to pendingInbound
-	pendingInboundMu sync.Mutex
+	// inbound is a bounded queue of inbound events that are awaiting processing
+	inbound *inboundQueue
 
-	// pendingInbound is a queue of inbound events that are awaiting processing
-	pendingInbound []CtxEvent[BehaviourEvent]
+	// counterInboundDropped counts the events dropped because the inbound queue was full.
+	counterInboundDropped metric.Int64Counter
+
+	// gaugeInboundDepth tracks the number of events waiting in the inbound queue.
+	gaugeInboundDepth metric.Int64ObservableGauge
 
 	// nextDue is the time the query pool last reported it could next make progress
 	// without an event arriving, or the zero time if it reported none.
@@ -175,28 +204,77 @@ func NewQueryBehaviour(self kadt.PeerID, cfg *QueryConfig) (*QueryBehaviour, err
 		cfg:       *cfg,
 		pool:      pool,
 		notifiers: make(map[coordt.QueryID]*queryNotifier[*EventQueryFinished]),
+		inbound:   newInboundQueue(cfg.QueueCapacity),
 		ready:     make(chan struct{}, 1),
 	}
+
+	h.counterInboundDropped, err = cfg.Meter.Int64Counter(
+		"query_inbound_events_dropped",
+		metric.WithDescription("Total number of events dropped because the query behaviour's inbound queue was full"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create query_inbound_events_dropped counter: %w", err)
+	}
+
+	h.gaugeInboundDepth, err = cfg.Meter.Int64ObservableGauge(
+		"query_inbound_queue_depth",
+		metric.WithDescription("Number of events waiting in the query behaviour's inbound queue"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			o.Observe(h.inbound.depth.Load())
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create query_inbound_queue_depth gauge: %w", err)
+	}
+
 	h.readyTimer = newReadyTimer(cfg.Clock, h.ready)
-	return h, err
+
+	return h, nil
 }
 
 // Notify receives a behaviour event and takes appropriate actions such as starting,
 // stopping, or updating queries. It also queues events for later processing and
 // triggers the advancement of the query pool if applicable.
 func (p *QueryBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
-	p.pendingInboundMu.Lock()
-	defer p.pendingInboundMu.Unlock()
-
 	ctx, span := p.cfg.Tracer.Start(ctx, "PooledQueryBehaviour.Notify")
 	defer span.End()
 
-	p.pendingInbound = append(p.pendingInbound, CtxEvent[BehaviourEvent]{Ctx: ctx, Event: ev})
+	if !p.inbound.enqueue(CtxEvent[BehaviourEvent]{Ctx: ctx, Event: ev}) {
+		p.counterInboundDropped.Add(ctx, 1)
+		p.cfg.Logger.Debug("dropped inbound event", slog.String("event", fmt.Sprintf("%T", ev)))
+		p.reportDropped(ctx, ev)
+		return
+	}
 
 	select {
 	case p.ready <- struct{}{}:
 	default:
 	}
+}
+
+// reportDropped tells the caller of a dropped operation that it will not be carried out. An
+// event that starts a query leaves a caller waiting on its monitor for a terminal event that
+// would otherwise never arrive.
+func (p *QueryBehaviour) reportDropped(ctx context.Context, ev BehaviourEvent) {
+	var queryID coordt.QueryID
+	var monitor QueryMonitor[*EventQueryFinished]
+
+	switch ev := ev.(type) {
+	case *EventStartFindCloserQuery:
+		queryID, monitor = ev.QueryID, ev.Notify
+	case *EventStartMessageQuery:
+		queryID, monitor = ev.QueryID, ev.Notify
+	default:
+		return
+	}
+
+	if monitor == nil {
+		return
+	}
+
+	n := &queryNotifier[*EventQueryFinished]{monitor: monitor}
+	n.NotifyFinished(ctx, &EventQueryFinished{QueryID: queryID, Err: ErrEventDropped})
 }
 
 // Ready returns a channel that signals when the pooled query behaviour is ready to
@@ -254,14 +332,7 @@ func (p *QueryBehaviour) nextPendingOutbound() (BehaviourEvent, bool) {
 }
 
 func (p *QueryBehaviour) nextPendingInbound() (CtxEvent[BehaviourEvent], bool) {
-	p.pendingInboundMu.Lock()
-	defer p.pendingInboundMu.Unlock()
-	if len(p.pendingInbound) == 0 {
-		return CtxEvent[BehaviourEvent]{}, false
-	}
-	var pev CtxEvent[BehaviourEvent]
-	pev, p.pendingInbound = p.pendingInbound[0], p.pendingInbound[1:]
-	return pev, true
+	return p.inbound.dequeue()
 }
 
 func (p *QueryBehaviour) perfomNextInbound(ctx context.Context) (BehaviourEvent, bool) {
@@ -376,11 +447,7 @@ func (p *QueryBehaviour) updateReadyStatus(performed bool) {
 		return
 	}
 
-	p.pendingInboundMu.Lock()
-	hasPendingInbound := len(p.pendingInbound) != 0
-	p.pendingInboundMu.Unlock()
-
-	if hasPendingInbound {
+	if !p.inbound.empty() {
 		signalReady(p.ready)
 		return
 	}

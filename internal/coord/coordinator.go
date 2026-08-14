@@ -97,6 +97,9 @@ type CoordinatorConfig struct {
 
 	// Query is the configuration used for the [PooledQueryBehaviour] which manages the execution of user queries.
 	Query QueryConfig
+
+	// Brdcst is the configuration used for the [PooledBroadcastBehaviour] which manages the storing of records with other peers.
+	Brdcst BroadcastConfig
 }
 
 // Validate checks the configuration options and returns an error if any have invalid values.
@@ -129,6 +132,25 @@ func (cfg *CoordinatorConfig) Validate() error {
 		}
 	}
 
+	// A node handler queues a response with a behaviour before releasing the network
+	// capacity its request held, so a behaviour whose queue is no larger than that capacity
+	// drops responses it should have been able to accept.
+	for _, c := range []struct {
+		component string
+		capacity  int
+	}{
+		{"Query", cfg.Query.QueueCapacity},
+		{"Routing", cfg.Routing.QueueCapacity},
+		{"Brdcst", cfg.Brdcst.QueueCapacity},
+	} {
+		if c.capacity <= cfg.Network.Capacity {
+			return &errs.ConfigurationError{
+				Component: "CoordinatorConfig",
+				Err:       fmt.Errorf("%s queue capacity must be greater than network capacity", c.component),
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -145,12 +167,19 @@ func DefaultCoordinatorConfig() *CoordinatorConfig {
 	cfg.Query.Clock = cfg.Clock
 	cfg.Query.Logger = cfg.Logger.With("behaviour", "pooledquery")
 	cfg.Query.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
+	cfg.Query.Meter = cfg.MeterProvider.Meter(tele.MeterName)
 
 	cfg.Routing = *DefaultRoutingConfig()
 	cfg.Routing.Clock = cfg.Clock
 	cfg.Routing.Logger = cfg.Logger.With("behaviour", "routing")
 	cfg.Routing.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
 	cfg.Routing.Meter = cfg.MeterProvider.Meter(tele.MeterName)
+
+	cfg.Brdcst = *DefaultBroadcastConfig()
+	cfg.Brdcst.Clock = cfg.Clock
+	cfg.Brdcst.Logger = cfg.Logger
+	cfg.Brdcst.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
+	cfg.Brdcst.Meter = cfg.MeterProvider.Meter(tele.MeterName)
 
 	cfg.Network = *DefaultNetworkConfig()
 	cfg.Network.Logger = cfg.Logger
@@ -196,7 +225,10 @@ func NewCoordinator(self kadt.PeerID, rtr coordt.Router[kadt.Key, kadt.PeerID, *
 		return nil, fmt.Errorf("broadcast: %w", err)
 	}
 
-	brdcstBehaviour := NewPooledBroadcastBehaviour(b, cfg.Clock, cfg.Logger, tele.Tracer)
+	brdcstBehaviour, err := NewPooledBroadcastBehaviour(b, &cfg.Brdcst)
+	if err != nil {
+		return nil, fmt.Errorf("broadcast behaviour: %w", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -551,6 +583,9 @@ func (c *Coordinator) waitForBroadcast(ctx context.Context, waiter *BroadcastWai
 		case wev, more := <-waiter.Finished():
 			if !more {
 				return nil, nil, ctx.Err()
+			}
+			if wev.Event.Err != nil {
+				return nil, nil, wev.Event.Err
 			}
 			return wev.Event.Contacted, wev.Event.Errors, nil
 		}

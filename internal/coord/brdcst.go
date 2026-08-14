@@ -9,14 +9,86 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/probe-lab/zikade/errs"
 	"github.com/probe-lab/zikade/internal/coord/brdcst"
 	"github.com/probe-lab/zikade/internal/coord/coordt"
 	"github.com/probe-lab/zikade/kadt"
 	"github.com/probe-lab/zikade/pb"
 	"github.com/probe-lab/zikade/tele"
 )
+
+type BroadcastConfig struct {
+	// Clock is a clock that may replaced by a mock when testing
+	Clock clock.Clock
+
+	// Logger is a structured logger that will be used when logging.
+	Logger *slog.Logger
+
+	// Tracer is the tracer that should be used to trace execution.
+	Tracer trace.Tracer
+
+	// Meter is the meter that should be used to record metrics.
+	Meter metric.Meter
+
+	// QueueCapacity is the maximum number of events that may be waiting to be processed by
+	// the behaviour. Events arriving when the queue is full are dropped. It must be larger
+	// than [NetworkConfig.Capacity], since a node handler queues a response here before
+	// releasing the capacity it held, so that many responses can be waiting at once.
+	QueueCapacity int
+}
+
+// Validate checks the configuration options and returns an error if any have invalid values.
+func (cfg *BroadcastConfig) Validate() error {
+	if cfg.Clock == nil {
+		return &errs.ConfigurationError{
+			Component: "BroadcastConfig",
+			Err:       fmt.Errorf("clock must not be nil"),
+		}
+	}
+
+	if cfg.Logger == nil {
+		return &errs.ConfigurationError{
+			Component: "BroadcastConfig",
+			Err:       fmt.Errorf("logger must not be nil"),
+		}
+	}
+
+	if cfg.Tracer == nil {
+		return &errs.ConfigurationError{
+			Component: "BroadcastConfig",
+			Err:       fmt.Errorf("tracer must not be nil"),
+		}
+	}
+
+	if cfg.Meter == nil {
+		return &errs.ConfigurationError{
+			Component: "BroadcastConfig",
+			Err:       fmt.Errorf("meter must not be nil"),
+		}
+	}
+
+	if cfg.QueueCapacity < 1 {
+		return &errs.ConfigurationError{
+			Component: "BroadcastConfig",
+			Err:       fmt.Errorf("queue capacity must be greater than zero"),
+		}
+	}
+
+	return nil
+}
+
+func DefaultBroadcastConfig() *BroadcastConfig {
+	return &BroadcastConfig{
+		Clock:         clock.New(),
+		Logger:        tele.DefaultLogger("coord"),
+		Tracer:        tele.NoopTracer(),
+		Meter:         tele.NoopMeter(),
+		QueueCapacity: 1024, // MAGIC
+	}
+}
 
 type PooledBroadcastBehaviour struct {
 	logger *slog.Logger
@@ -40,11 +112,14 @@ type PooledBroadcastBehaviour struct {
 	// it must only be accessed while performMu is held
 	notifiers map[coordt.QueryID]*queryNotifier[*EventBroadcastFinished]
 
-	// pendingInboundMu guards access to pendingInbound
-	pendingInboundMu sync.Mutex
+	// inbound is a bounded queue of inbound events that are awaiting processing
+	inbound *inboundQueue
 
-	// pendingInbound is a queue of inbound events that are awaiting processing
-	pendingInbound []CtxEvent[BehaviourEvent]
+	// counterInboundDropped counts the events dropped because the inbound queue was full.
+	counterInboundDropped metric.Int64Counter
+
+	// gaugeInboundDepth tracks the number of events waiting in the inbound queue.
+	gaugeInboundDepth metric.Int64ObservableGauge
 
 	// nextDue is the time the broadcast pool last reported it could next make progress
 	// without an event arriving, or the zero time if it reported none.
@@ -64,17 +139,48 @@ type PooledBroadcastBehaviour struct {
 
 var _ Behaviour[BehaviourEvent, BehaviourEvent] = (*PooledBroadcastBehaviour)(nil)
 
-func NewPooledBroadcastBehaviour(brdcstPool *brdcst.Pool[kadt.Key, kadt.PeerID, *pb.Message], clk clock.Clock, logger *slog.Logger, tracer trace.Tracer) *PooledBroadcastBehaviour {
+func NewPooledBroadcastBehaviour(brdcstPool *brdcst.Pool[kadt.Key, kadt.PeerID, *pb.Message], cfg *BroadcastConfig) (*PooledBroadcastBehaviour, error) {
+	if cfg == nil {
+		cfg = DefaultBroadcastConfig()
+	} else if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	b := &PooledBroadcastBehaviour{
 		pool:      brdcstPool,
-		clk:       clk,
+		clk:       cfg.Clock,
 		notifiers: make(map[coordt.QueryID]*queryNotifier[*EventBroadcastFinished]),
+		inbound:   newInboundQueue(cfg.QueueCapacity),
 		ready:     make(chan struct{}, 1),
-		logger:    logger.With("behaviour", "pooledBroadcast"),
-		tracer:    tracer,
+		logger:    cfg.Logger.With("behaviour", "pooledBroadcast"),
+		tracer:    cfg.Tracer,
 	}
-	b.readyTimer = newReadyTimer(clk, b.ready)
-	return b
+
+	var err error
+
+	b.counterInboundDropped, err = cfg.Meter.Int64Counter(
+		"broadcast_inbound_events_dropped",
+		metric.WithDescription("Total number of events dropped because the broadcast behaviour's inbound queue was full"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create broadcast_inbound_events_dropped counter: %w", err)
+	}
+
+	b.gaugeInboundDepth, err = cfg.Meter.Int64ObservableGauge(
+		"broadcast_inbound_queue_depth",
+		metric.WithDescription("Number of events waiting in the broadcast behaviour's inbound queue"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			o.Observe(b.inbound.depth.Load())
+			return nil
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create broadcast_inbound_queue_depth gauge: %w", err)
+	}
+
+	b.readyTimer = newReadyTimer(cfg.Clock, b.ready)
+
+	return b, nil
 }
 
 func (b *PooledBroadcastBehaviour) Ready() <-chan struct{} {
@@ -82,18 +188,33 @@ func (b *PooledBroadcastBehaviour) Ready() <-chan struct{} {
 }
 
 func (b *PooledBroadcastBehaviour) Notify(ctx context.Context, ev BehaviourEvent) {
-	b.pendingInboundMu.Lock()
-	defer b.pendingInboundMu.Unlock()
-
 	ctx, span := b.tracer.Start(ctx, "PooledBroadcastBehaviour.Notify")
 	defer span.End()
 
-	b.pendingInbound = append(b.pendingInbound, CtxEvent[BehaviourEvent]{Ctx: ctx, Event: ev})
+	if !b.inbound.enqueue(CtxEvent[BehaviourEvent]{Ctx: ctx, Event: ev}) {
+		b.counterInboundDropped.Add(ctx, 1)
+		b.logger.Debug("dropped inbound event", slog.String("event", fmt.Sprintf("%T", ev)))
+		b.reportDropped(ctx, ev)
+		return
+	}
 
 	select {
 	case b.ready <- struct{}{}:
 	default:
 	}
+}
+
+// reportDropped tells the caller of a dropped operation that it will not be carried out. An
+// event that starts a broadcast leaves a caller waiting on its monitor for a terminal event
+// that would otherwise never arrive.
+func (b *PooledBroadcastBehaviour) reportDropped(ctx context.Context, ev BehaviourEvent) {
+	sev, ok := ev.(*EventStartBroadcast)
+	if !ok || sev.Notify == nil {
+		return
+	}
+
+	n := &queryNotifier[*EventBroadcastFinished]{monitor: sev.Notify}
+	n.NotifyFinished(ctx, &EventBroadcastFinished{QueryID: sev.QueryID, Err: ErrEventDropped})
 }
 
 func (b *PooledBroadcastBehaviour) Perform(ctx context.Context) (out BehaviourEvent, performed bool) {
@@ -142,14 +263,7 @@ func (b *PooledBroadcastBehaviour) nextPendingOutbound() (BehaviourEvent, bool) 
 }
 
 func (b *PooledBroadcastBehaviour) nextPendingInbound() (CtxEvent[BehaviourEvent], bool) {
-	b.pendingInboundMu.Lock()
-	defer b.pendingInboundMu.Unlock()
-	if len(b.pendingInbound) == 0 {
-		return CtxEvent[BehaviourEvent]{}, false
-	}
-	var pev CtxEvent[BehaviourEvent]
-	pev, b.pendingInbound = b.pendingInbound[0], b.pendingInbound[1:]
-	return pev, true
+	return b.inbound.dequeue()
 }
 
 // updateReadyStatus signals whether the behaviour has further work to do. It is
@@ -170,11 +284,7 @@ func (b *PooledBroadcastBehaviour) updateReadyStatus(performed bool) {
 		return
 	}
 
-	b.pendingInboundMu.Lock()
-	hasPendingInbound := len(b.pendingInbound) != 0
-	b.pendingInboundMu.Unlock()
-
-	if hasPendingInbound {
+	if !b.inbound.empty() {
 		signalReady(b.ready)
 		return
 	}

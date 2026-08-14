@@ -120,6 +120,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 	coordCfg.Query.Clock = cfg.Clock
 	coordCfg.Query.Logger = cfg.Logger.With("behaviour", "pooledquery")
 	coordCfg.Query.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
+	coordCfg.Query.Meter = cfg.MeterProvider.Meter(tele.MeterName)
 	coordCfg.Query.Concurrency = cfg.Query.Concurrency
 	coordCfg.Query.Timeout = cfg.Query.Timeout
 	coordCfg.Query.RequestConcurrency = cfg.Query.RequestConcurrency
@@ -131,6 +132,11 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 	coordCfg.Routing.Meter = cfg.MeterProvider.Meter(tele.MeterName)
 	coordCfg.Routing.BootstrapPeers = d.addBootstrapPeers()
 	coordCfg.Routing.BootstrapMinimumPopulation = cfg.BootstrapMinimumPopulation
+
+	coordCfg.Brdcst.Clock = cfg.Clock
+	coordCfg.Brdcst.Logger = cfg.Logger.With("behaviour", "pooledbroadcast")
+	coordCfg.Brdcst.Tracer = cfg.TracerProvider.Tracer(tele.TracerName)
+	coordCfg.Brdcst.Meter = cfg.MeterProvider.Meter(tele.MeterName)
 
 	rtr := &router{
 		host:       h,
