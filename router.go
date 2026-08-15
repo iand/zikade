@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/probe-lab/zikade/internal/coord/coordt"
+	"github.com/iand/xorbie/coordt"
 	"github.com/probe-lab/zikade/kadt"
 	"github.com/probe-lab/zikade/pb"
 	"github.com/probe-lab/zikade/tele"

@@ -18,7 +18,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap/exp/zapslog"
 
-	"github.com/probe-lab/zikade/internal/coord/routing"
+	"github.com/iand/xorbie/routing"
 	"github.com/probe-lab/zikade/kadt"
 )
 

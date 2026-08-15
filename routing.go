@@ -18,7 +18,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otel "go.opentelemetry.io/otel/trace"
 
-	"github.com/probe-lab/zikade/internal/coord/coordt"
+	"github.com/iand/xorbie/coordt"
 	"github.com/probe-lab/zikade/kadt"
 	"github.com/probe-lab/zikade/pb"
 )

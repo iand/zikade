@@ -16,16 +16,16 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 
-	"github.com/probe-lab/zikade/internal/coord"
-	"github.com/probe-lab/zikade/internal/coord/cplutil"
-	"github.com/probe-lab/zikade/internal/coord/routing"
+	"github.com/iand/xorbie"
+	"github.com/iand/xorbie/routing"
+	"github.com/probe-lab/zikade/internal/cplutil"
 	"github.com/probe-lab/zikade/kadt"
 	"github.com/probe-lab/zikade/pb"
 	"github.com/probe-lab/zikade/tele"
 )
 
 // aminoCoordinator is the neutral coordinator instantiated for the Amino wire types.
-type aminoCoordinator = coord.Coordinator[kadt.Key, kadt.PeerID, *pb.Message]
+type aminoCoordinator = xorbie.Coordinator[kadt.Key, kadt.PeerID, *pb.Message]
 
 // DHT is an implementation of Kademlia with S/Kademlia modifications.
 // It is used to implement the base Routing module.
@@ -116,7 +116,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 	}
 
 	// instantiate a new Kademlia DHT coordinator.
-	coordCfg := coord.DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
+	coordCfg := xorbie.DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 	coordCfg.Logger = cfg.Logger
 	coordCfg.MeterProvider = cfg.MeterProvider
 	coordCfg.TracerProvider = cfg.TracerProvider
@@ -142,7 +142,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		tele:       d.tele,
 		timeout:    cfg.TimeoutStreamRequest,
 	}
-	d.kad, err = coord.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, cplutil.GenRandPeerID, coordCfg)
+	d.kad, err = xorbie.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, cplutil.GenRandPeerID, coordCfg)
 	if err != nil {
 		return nil, fmt.Errorf("new coordinator: %w", err)
 	}
