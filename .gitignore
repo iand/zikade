@@ -12,3 +12,6 @@
 
 # Go workspace file
 go.work
+
+# Build output of cmd/scout when built in place
+/cmd/scout/scout
