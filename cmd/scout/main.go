@@ -29,11 +29,12 @@ func main() {
 
 func run() error {
 	var (
-		mode     = flag.String("mode", "client", "dht mode, client or server")
-		duration = flag.Duration("duration", time.Minute, "how long to run for, zero to run until interrupted")
-		interval = flag.Duration("interval", 5*time.Second, "how often to report the routing table")
-		findPeer = flag.String("find-peer", "", "peer id to look up once the routing table has nodes in it")
-		level    = flag.String("log", "info", "log level, one of debug, info, warn or error")
+		mode         = flag.String("mode", "client", "dht mode, client or server")
+		duration     = flag.Duration("duration", 2*time.Minute, "how long to run for, zero to run until interrupted")
+		interval     = flag.Duration("interval", 5*time.Second, "how often to report the routing table")
+		sizeInterval = flag.Duration("size-interval", 30*time.Second, "how often to report the estimated network size")
+		findPeer     = flag.String("find-peer", "", "peer id to look up once the routing table has nodes in it")
+		level        = flag.String("log", "info", "log level, one of debug, info, warn or error")
 	)
 	flag.Parse()
 
@@ -85,7 +86,7 @@ func run() error {
 
 	logger.Info("dht started, nothing has asked it to bootstrap", "mode", *mode, "bootstrap_peers", len(cfg.BootstrapPeers))
 
-	report(ctx, logger, rt, *interval)
+	report(ctx, logger, d, rt, *interval, *sizeInterval)
 
 	if *findPeer != "" {
 		if err := lookup(context.Background(), logger, d, *findPeer); err != nil {
@@ -98,11 +99,16 @@ func run() error {
 	return nil
 }
 
-// report prints the routing table's size until ctx is done, noting the first time a node
-// appears. The DHT starts a bootstrap of its own accord when its table is short of nodes.
-func report(ctx context.Context, logger *slog.Logger, rt *triert.TrieRT[kadt.Key, kadt.PeerID], interval time.Duration) {
+// report prints the routing table's size and the estimated size of the network until ctx is
+// done, noting the first time a node appears. The estimate moves only as lookups complete, so
+// it is reported on its own slower cadence. The DHT starts a bootstrap of its own accord when
+// its table is short of nodes.
+func report(ctx context.Context, logger *slog.Logger, d *zikade.DHT, rt *triert.TrieRT[kadt.Key, kadt.PeerID], interval, sizeInterval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	sizeTicker := time.NewTicker(sizeInterval)
+	defer sizeTicker.Stop()
 
 	start := time.Now()
 	seen := false
@@ -117,9 +123,34 @@ func report(ctx context.Context, logger *slog.Logger, rt *triert.TrieRT[kadt.Key
 				seen = true
 				logger.Info("routing table has its first node", "elapsed", time.Since(start).Round(time.Millisecond))
 			}
-			logger.Info("routing table", "elapsed", time.Since(start).Round(time.Second), "size", size, "occupied_cpls", occupiedCpls(rt))
+
+			logger.Info("routing table",
+				"elapsed", time.Since(start).Round(time.Second),
+				"size", size,
+				"occupied_cpls", occupiedCpls(rt),
+			)
+		case <-sizeTicker.C:
+			reportNetworkSize(logger, d, time.Since(start).Round(time.Second))
 		}
 	}
+}
+
+// reportNetworkSize prints the estimated size of the network, or why there is no estimate yet.
+// An estimate needs several completed lookups, so a node that has just started has none.
+func reportNetworkSize(logger *slog.Logger, d *zikade.DHT, elapsed time.Duration) {
+	est, err := d.NetworkSize()
+	if err != nil {
+		logger.Info("network size", "elapsed", elapsed, "size", "unknown", "reason", err.Error())
+		return
+	}
+
+	logger.Info("network size",
+		"elapsed", elapsed,
+		"size", est.Size,
+		"stderr", fmt.Sprintf("%.1f", est.StdErr),
+		"fit", fmt.Sprintf("%.2f", est.Fit),
+		"samples", est.Samples,
+	)
 }
 
 // lookup runs a FindPeer for id, which is the cheapest end to end exercise of a query.

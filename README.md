@@ -19,6 +19,7 @@ The core Kademlia algorithms are provided by a separate module, [xorbie](https:/
   - [Motivation](#motivation)
   - [Compatibility](#compatibility)
 - [Install](#install)
+- [Scout](#scout)
 - [Maintainers](#maintainers)
 - [Contributing](#contributing)
 - [License](#license)
@@ -61,6 +62,41 @@ Where possible, Zikade will remain compatible with [go-libp2p-kad-dht](https://g
 ```sh
 go get github.com/probe-lab/zikade
 ```
+
+## Scout
+
+`scout` runs a zikade DHT against the public IPFS network and reports what it finds. It is the
+quickest way to see the library working end to end, and to watch a routing table fill from a
+cold start.
+
+```sh
+go run ./cmd/scout
+```
+
+It reports the routing table's occupancy every few seconds, and the estimated size of the
+network on a slower cadence, since that estimate only moves as lookups complete:
+
+```
+routing table   elapsed=30s  size=63  occupied_cpls=9
+network size    elapsed=1m   size=3864  stderr=6.0  fit=243.28  samples=40
+```
+
+`stderr` is the standard error of the estimate and `fit` reports how well the measurements
+match a network whose nodes are spread evenly across the keyspace. A large `fit` means the
+estimate rests on samples drawn from too narrow a part of the keyspace, which is usual in the
+first minutes after starting. Compare `fit` against its own earlier values rather than against
+a fixed threshold.
+
+Useful flags:
+
+| Flag              | Default  | Meaning                                                 |
+| ----------------- | -------- | ------------------------------------------------------- |
+| `-mode`           | `client` | Run as a DHT client or server                            |
+| `-duration`       | `1m`     | How long to run for, zero to run until interrupted       |
+| `-interval`       | `5s`     | How often to report the routing table                    |
+| `-size-interval`  | `1m`     | How often to report the estimated network size           |
+| `-find-peer`      |          | Peer id to look up once the routing table has nodes      |
+| `-log`            | `info`   | Log level                                                |
 
 ## Maintainers
 

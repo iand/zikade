@@ -17,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 
 	"github.com/iand/xorbie"
+	"github.com/iand/xorbie/netsize"
 	"github.com/iand/xorbie/routing"
 	"github.com/probe-lab/zikade/internal/cplutil"
 	"github.com/probe-lab/zikade/kadt"
@@ -382,6 +383,13 @@ func (d *DHT) debugErr(err error, msg string, args ...any) {
 		return
 	}
 	d.log.With(args...).Debug(msg, tele.LogAttrError(err))
+}
+
+// NetworkSize reports the estimated number of nodes in the network, measured from the results
+// of the lookups this DHT has performed. It returns [netsize.ErrNotEnoughData] when too few
+// lookups have completed for an estimate to be made.
+func (d *DHT) NetworkSize() (netsize.Estimate, error) {
+	return d.kad.NetworkSize()
 }
 
 // AddAddresses suggests peers and their associated addresses to be added to the routing table.

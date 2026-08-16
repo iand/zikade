@@ -30,7 +30,6 @@ type Telemetry struct {
 	SentRequestErrors      metric.Int64Counter
 	SentBytes              metric.Int64Histogram
 	LRUCache               metric.Int64Counter
-	NetworkSize            metric.Int64Counter
 }
 
 // NewWithGlobalProviders uses the global meter and tracer providers from
@@ -116,11 +115,6 @@ func NewTelemetry(meterProvider metric.MeterProvider, tracerProvider trace.Trace
 	t.LRUCache, err = meter.Int64Counter("lru_cache", metric.WithDescription("Cache hit or miss counter"))
 	if err != nil {
 		return nil, fmt.Errorf("lru_cache counter: %w", err)
-	}
-
-	t.NetworkSize, err = meter.Int64Counter("network_size", metric.WithDescription("Network size estimation"))
-	if err != nil {
-		return nil, fmt.Errorf("network_size counter: %w", err)
 	}
 
 	return t, nil
