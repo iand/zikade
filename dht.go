@@ -121,6 +121,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 	coordCfg.Logger = cfg.Logger
 	coordCfg.MeterProvider = cfg.MeterProvider
 	coordCfg.TracerProvider = cfg.TracerProvider
+	coordCfg.ReplicationFactor = cfg.BucketSize
 
 	coordCfg.Query.Logger = cfg.Logger.With("behaviour", "pooledquery")
 	coordCfg.Query.Concurrency = cfg.Query.Concurrency

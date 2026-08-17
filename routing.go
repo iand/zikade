@@ -108,7 +108,16 @@ func (d *DHT) Provide(ctx context.Context, c cid.Cid, brdcst bool) error {
 	}
 
 	// finally, find the closest peers to the target key.
-	return d.kad.BroadcastRecord(ctx, msg)
+	stats, err := d.kad.BroadcastFollowUp(ctx, msg)
+	if err != nil {
+		return err
+	}
+
+	if stats.StoreSuccess == 0 {
+		return fmt.Errorf("no peers stored the provider record")
+	}
+
+	return nil
 }
 
 func (d *DHT) FindProvidersAsync(ctx context.Context, c cid.Cid, count int) <-chan peer.AddrInfo {
@@ -247,9 +256,13 @@ func (d *DHT) PutValue(ctx context.Context, keyStr string, value []byte, opts ..
 	}
 
 	// finally, find the closest peers to the target key.
-	err := d.kad.BroadcastRecord(ctx, msg)
+	stats, err := d.kad.BroadcastFollowUp(ctx, msg)
 	if err != nil {
 		return fmt.Errorf("query error: %w", err)
+	}
+
+	if stats.StoreSuccess == 0 {
+		return fmt.Errorf("no peers stored the record")
 	}
 
 	return nil
@@ -457,7 +470,7 @@ func (d *DHT) searchValueRoutine(ctx context.Context, backend Backend, ns string
 			Record: record.MakePutRecord(string(routingKey), best),
 		}
 
-		if err := d.kad.BroadcastStatic(ctx, msg, fixupPeers); err != nil {
+		if _, err := d.kad.BroadcastStatic(ctx, msg, fixupPeers); err != nil {
 			d.log.Warn("Failed updating peer")
 		}
 	}()
