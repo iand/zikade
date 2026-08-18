@@ -26,6 +26,12 @@ import (
 var _ routing.Routing = (*DHT)(nil)
 
 func (d *DHT) FindPeer(ctx context.Context, id peer.ID) (peer.AddrInfo, error) {
+	return d.FindPeerProgress(ctx, id, nil)
+}
+
+// FindPeerProgress is [DHT.FindPeer] with a callback invoked for each node that responds during
+// the walk, in the order they respond, carrying the running query stats. onVisit may be nil.
+func (d *DHT) FindPeerProgress(ctx context.Context, id peer.ID, onVisit func(node peer.ID, stats coordt.QueryStats)) (peer.AddrInfo, error) {
 	ctx, span := d.tele.Tracer.Start(ctx, "DHT.FindPeer")
 	defer span.End()
 
@@ -47,6 +53,9 @@ func (d *DHT) FindPeer(ctx context.Context, id peer.ID) (peer.AddrInfo, error) {
 
 	var foundPeer peer.ID
 	fn := func(ctx context.Context, visited kadt.PeerID, msg *pb.Message, stats coordt.QueryStats) error {
+		if onVisit != nil {
+			onVisit(peer.ID(visited), stats)
+		}
 		if peer.ID(visited) == id {
 			foundPeer = peer.ID(visited)
 			return coordt.ErrSkipRemaining
