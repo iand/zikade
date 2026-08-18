@@ -18,6 +18,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/iand/xorbie/coordt"
+	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-libdht/kad/triert"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -143,7 +144,7 @@ func runTUI(ctx context.Context, cancel context.CancelFunc, d *zikade.DHT, rt *t
 	// rather than waiting for the first tick.
 	rtPanel.SetText(rtText(rt, start))
 	nsPanel.SetText(nsText(d, start))
-	const helpText = "commands: findpeer <peerid>, exit"
+	const helpText = "commands: findpeer <peerid>, findproviders <cid>, exit"
 	status.SetText(helpText)
 
 	input.SetDoneFunc(func(key tcell.Key) {
@@ -172,6 +173,18 @@ func runTUI(ctx context.Context, cancel context.CancelFunc, d *zikade.DHT, rt *t
 			go func() {
 				trace("findpeer " + id)
 				runFindPeer(context.Background(), d, id, trace)
+				app.QueueUpdateDraw(func() { status.SetText(helpText) })
+			}()
+		case "findproviders":
+			if len(fields) < 2 {
+				status.SetText("usage: findproviders <cid>")
+				return
+			}
+			key := fields[1]
+			status.SetText("finding providers for " + key + " ...")
+			go func() {
+				trace("findproviders " + key)
+				runFindProviders(context.Background(), d, key, trace)
 				app.QueueUpdateDraw(func() { status.SetText(helpText) })
 			}()
 		default:
@@ -278,6 +291,36 @@ func runFindPeer(ctx context.Context, d *zikade.DHT, id string, trace func(strin
 	trace(fmt.Sprintf("  found %s with %d addrs in %s", shorten(addrInfo.ID), len(addrInfo.Addrs), time.Since(start).Round(time.Millisecond)))
 	for _, a := range addrInfo.Addrs {
 		trace("    " + a.String())
+	}
+}
+
+// runFindProviders looks up every provider for key, tracing each node contacted and then the
+// providers found with their addresses.
+func runFindProviders(ctx context.Context, d *zikade.DHT, key string, trace func(string)) {
+	c, err := cid.Decode(key)
+	if err != nil {
+		trace(fmt.Sprintf("  bad cid: %s", err))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+
+	start := time.Now()
+	providers, err := d.FindProvidersProgress(ctx, c, 0, func(node peer.ID, stats coordt.QueryStats) {
+		trace(fmt.Sprintf("  contacted %s  req=%d ok=%d fail=%d", shorten(node), stats.Requests, stats.Success, stats.Failure))
+	})
+	if err != nil {
+		trace(fmt.Sprintf("  failed after %s: %s", time.Since(start).Round(time.Millisecond), err))
+		return
+	}
+
+	trace(fmt.Sprintf("  found %d providers in %s", len(providers), time.Since(start).Round(time.Millisecond)))
+	for _, p := range providers {
+		trace(fmt.Sprintf("    %s  (%d addrs)", shorten(p.ID), len(p.Addrs)))
+		for _, a := range p.Addrs {
+			trace("      " + a.String())
+		}
 	}
 }
 

@@ -231,6 +231,88 @@ func (d *DHT) findProvidersAsyncRoutine(ctx context.Context, c cid.Cid, count in
 	}
 }
 
+// FindProviders looks up providers for c, returning up to count of them, or all it finds if count
+// is not greater than zero. It reads the local provider store before walking the network.
+func (d *DHT) FindProviders(ctx context.Context, c cid.Cid, count int) ([]peer.AddrInfo, error) {
+	return d.FindProvidersProgress(ctx, c, count, nil)
+}
+
+// FindProvidersProgress is [DHT.FindProviders] with a callback invoked for each node that responds
+// during the walk, in the order they respond, carrying the running query stats. onVisit may be nil.
+func (d *DHT) FindProvidersProgress(ctx context.Context, c cid.Cid, count int, onVisit func(node peer.ID, stats coordt.QueryStats)) ([]peer.AddrInfo, error) {
+	ctx, span := d.tele.Tracer.Start(ctx, "DHT.FindProviders", otel.WithAttributes(attribute.String("cid", c.String()), attribute.Int("count", count)))
+	defer span.End()
+
+	// verify that this DHT supports provider records by checking that a "providers" backend is
+	// registered.
+	b, found := d.backends[namespaceProviders]
+	if !found {
+		return nil, routing.ErrNotSupported
+	}
+
+	if !c.Defined() {
+		return nil, fmt.Errorf("invalid cid: undefined")
+	}
+
+	seen := map[peer.ID]struct{}{}
+	var providers []peer.AddrInfo
+
+	// add records a provider, reporting whether the requested count has been reached.
+	add := func(p peer.AddrInfo) bool {
+		if _, ok := seen[p.ID]; ok {
+			return false
+		}
+		seen[p.ID] = struct{}{}
+		providers = append(providers, p)
+		return count > 0 && len(providers) >= count
+	}
+
+	// fetch the providers held locally first
+	stored, err := b.Fetch(ctx, string(c.Hash()))
+	if err != nil {
+		if !errors.Is(err, ds.ErrNotFound) {
+			return nil, fmt.Errorf("fetch providers from store: %w", err)
+		}
+		stored = &providerSet{}
+	}
+
+	ps, ok := stored.(*providerSet)
+	if !ok {
+		return nil, fmt.Errorf("stored value is not a provider set, got %T", stored)
+	}
+
+	for _, provider := range ps.providers {
+		if add(provider) {
+			return providers, nil
+		}
+	}
+
+	msg := &pb.Message{
+		Type: pb.Message_GET_PROVIDERS,
+		Key:  c.Hash(),
+	}
+
+	fn := func(ctx context.Context, id kadt.PeerID, resp *pb.Message, stats coordt.QueryStats) error {
+		if onVisit != nil {
+			onVisit(peer.ID(id), stats)
+		}
+
+		for _, provider := range resp.ProviderAddrInfos() {
+			if add(provider) {
+				return coordt.ErrSkipRemaining
+			}
+		}
+
+		return nil
+	}
+
+	if _, _, err := d.kad.QueryMessage(ctx, msg, fn, d.cfg.BucketSize); err != nil {
+		return nil, fmt.Errorf("failed to run query: %w", err)
+	}
+
+	return providers, nil
+}
+
 // PutValue satisfies the [routing.Routing] interface and will add the given
 // value to the k-closest nodes to keyStr. The parameter keyStr should have the
 // format `/$namespace/$binary_id`. Namespace examples are `pk` or `ipns`. To
