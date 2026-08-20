@@ -1,12 +1,16 @@
 package zikade
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/iand/xorbie/routing"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/probe-lab/zikade/kadt"
 	"github.com/probe-lab/zikade/tele"
 )
 
@@ -118,4 +122,66 @@ func NewTelemetry(meterProvider metric.MeterProvider, tracerProvider trace.Trace
 	}
 
 	return t, nil
+}
+
+// registerRoutingTableMetrics registers observable gauges that report the routing table's size, how
+// many buckets are occupied, and the size of each occupied bucket tagged by common prefix length.
+func registerRoutingTableMetrics(meterProvider metric.MeterProvider, rt routing.RoutingTableCpl[kadt.Key, kadt.PeerID]) error {
+	if meterProvider == nil {
+		meterProvider = otel.GetMeterProvider()
+	}
+	meter := meterProvider.Meter(tele.MeterName)
+
+	var zeroKey kadt.Key
+	bits := zeroKey.BitLen()
+
+	_, err := meter.Int64ObservableGauge(
+		"routing_table_size",
+		metric.WithDescription("Number of nodes in the routing table"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			if sizer, ok := rt.(interface{ Size() int }); ok {
+				o.Observe(int64(sizer.Size()))
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("routing_table_size gauge: %w", err)
+	}
+
+	_, err = meter.Int64ObservableGauge(
+		"routing_table_buckets_occupied",
+		metric.WithDescription("Number of common prefix lengths holding at least one node"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			var n int64
+			for cpl := range bits {
+				if rt.CplSize(cpl) > 0 {
+					n++
+				}
+			}
+			o.Observe(n)
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("routing_table_buckets_occupied gauge: %w", err)
+	}
+
+	_, err = meter.Int64ObservableGauge(
+		"routing_table_bucket_size",
+		metric.WithDescription("Number of nodes in each occupied bucket, tagged by common prefix length"),
+		metric.WithInt64Callback(func(ctx context.Context, o metric.Int64Observer) error {
+			for cpl := range bits {
+				if size := rt.CplSize(cpl); size > 0 {
+					o.Observe(int64(size), metric.WithAttributes(attribute.Int("cpl", cpl)))
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("routing_table_bucket_size gauge: %w", err)
+	}
+
+	return nil
 }
