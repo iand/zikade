@@ -1,7 +1,8 @@
 // scout starts a zikade DHT against the public IPFS network and reports how its
 // routing table fills. It runs a small terminal UI with a panel for the routing
-// table, a panel for the estimated network size, and a command line that accepts
-// "findpeer <peerid>" and "exit".
+// table, a panel for the estimated network size, a panel of routing activity read
+// from the DHT's metrics, and a command line that accepts "findpeer <peerid>" and
+// "exit".
 package main
 
 import (
@@ -23,6 +24,8 @@ import (
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/rivo/tview"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/probe-lab/zikade"
 	"github.com/probe-lab/zikade/kadt"
@@ -81,9 +84,14 @@ func run() error {
 		return fmt.Errorf("new routing table: %w", err)
 	}
 
+	// A manual reader lets the UI pull a fresh snapshot of the DHT's instruments on each refresh
+	// tick without any exporter running in the background.
+	reader := sdkmetric.NewManualReader()
+
 	cfg := zikade.DefaultConfig()
 	cfg.Logger = logger
 	cfg.RoutingTable = rt
+	cfg.MeterProvider = sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 
 	switch *mode {
 	case "client":
@@ -102,12 +110,12 @@ func run() error {
 
 	logger.Info("dht started, nothing has asked it to bootstrap", "mode", *mode, "bootstrap_peers", len(cfg.BootstrapPeers))
 
-	return runTUI(ctx, cancel, d, rt, *interval, *sizeInterval)
+	return runTUI(ctx, cancel, d, rt, reader, *interval, *sizeInterval)
 }
 
 // runTUI builds and runs the terminal UI. cancel stops the background refresh when the user
 // exits, so the refresh does not outlive the screen it draws to.
-func runTUI(ctx context.Context, cancel context.CancelFunc, d *zikade.DHT, rt *triert.TrieRT[kadt.Key, kadt.PeerID], interval, sizeInterval time.Duration) error {
+func runTUI(ctx context.Context, cancel context.CancelFunc, d *zikade.DHT, rt *triert.TrieRT[kadt.Key, kadt.PeerID], reader *sdkmetric.ManualReader, interval, sizeInterval time.Duration) error {
 	app := tview.NewApplication()
 
 	rtPanel := tview.NewTextView()
@@ -117,6 +125,10 @@ func runTUI(ctx context.Context, cancel context.CancelFunc, d *zikade.DHT, rt *t
 	nsPanel := tview.NewTextView()
 	nsPanel.SetBorder(true)
 	nsPanel.SetTitle(" network size ")
+
+	metricsPanel := tview.NewTextView()
+	metricsPanel.SetBorder(true)
+	metricsPanel.SetTitle(" routing activity ")
 
 	tracePanel := tview.NewTextView()
 	tracePanel.SetBorder(true)
@@ -144,6 +156,7 @@ func runTUI(ctx context.Context, cancel context.CancelFunc, d *zikade.DHT, rt *t
 	// rather than waiting for the first tick.
 	rtPanel.SetText(rtText(rt, start))
 	nsPanel.SetText(nsText(d, start))
+	metricsPanel.SetText(metricsText(ctx, reader, rt))
 	const helpText = "commands: findpeer <peerid>, findproviders <cid>, exit"
 	status.SetText(helpText)
 
@@ -206,6 +219,7 @@ func runTUI(ctx context.Context, cancel context.CancelFunc, d *zikade.DHT, rt *t
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(rtPanel, 5, 0, false).
 		AddItem(nsPanel, 7, 0, false).
+		AddItem(metricsPanel, 13, 0, false).
 		AddItem(tracePanel, 0, 1, false).
 		AddItem(status, 1, 0, false).
 		AddItem(input, 1, 0, true)
@@ -216,7 +230,7 @@ func runTUI(ctx context.Context, cancel context.CancelFunc, d *zikade.DHT, rt *t
 		app.Stop()
 	}()
 
-	go refresh(ctx, app, d, rt, rtPanel, nsPanel, start, interval, sizeInterval)
+	go refresh(ctx, app, d, rt, reader, rtPanel, nsPanel, metricsPanel, start, interval, sizeInterval)
 
 	if err := app.SetRoot(layout, true).Run(); err != nil {
 		return fmt.Errorf("run tui: %w", err)
@@ -227,7 +241,7 @@ func runTUI(ctx context.Context, cancel context.CancelFunc, d *zikade.DHT, rt *t
 
 // refresh repaints the two panels on their own tickers until ctx is cancelled. The estimate
 // moves only as lookups complete, so it is refreshed on its own slower cadence.
-func refresh(ctx context.Context, app *tview.Application, d *zikade.DHT, rt *triert.TrieRT[kadt.Key, kadt.PeerID], rtPanel, nsPanel *tview.TextView, start time.Time, interval, sizeInterval time.Duration) {
+func refresh(ctx context.Context, app *tview.Application, d *zikade.DHT, rt *triert.TrieRT[kadt.Key, kadt.PeerID], reader *sdkmetric.ManualReader, rtPanel, nsPanel, metricsPanel *tview.TextView, start time.Time, interval, sizeInterval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -239,11 +253,109 @@ func refresh(ctx context.Context, app *tview.Application, d *zikade.DHT, rt *tri
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			app.QueueUpdateDraw(func() { rtPanel.SetText(rtText(rt, start)) })
+			rtLine := rtText(rt, start)
+			metricsLine := metricsText(ctx, reader, rt)
+			app.QueueUpdateDraw(func() {
+				rtPanel.SetText(rtLine)
+				metricsPanel.SetText(metricsLine)
+			})
 		case <-sizeTicker.C:
 			app.QueueUpdateDraw(func() { nsPanel.SetText(nsText(d, start)) })
 		}
 	}
+}
+
+// metricsText renders the routing activity panel from a snapshot of the DHT's instruments. The
+// counters are cumulative totals since the node started; the survey and region lines stay at zero
+// until the survey is enabled.
+func metricsText(ctx context.Context, reader *sdkmetric.ManualReader, rt *triert.TrieRT[kadt.Key, kadt.PeerID]) string {
+	m, err := collectMetrics(ctx, reader)
+	if err != nil {
+		return "metrics unavailable: " + err.Error()
+	}
+
+	get := func(name string) int64 { return int64(m[name]) }
+
+	return fmt.Sprintf(
+		"network:   size=%d  in-flight=%d  handlers=%d\n"+
+			"bootstrap: running=%d  sent=%d ok=%d fail=%d\n"+
+			"explore:   running=%d  sent=%d ok=%d fail=%d\n"+
+			"survey:    running=%d  sent=%d ok=%d fail=%d\n"+
+			"include:   queued=%d  sent=%d ok=%d fail=%d\n"+
+			"probe:     pending=%d  sent=%d ok=%d fail=%d\n"+
+			"regions:   count=%d  oldest=%ds  done=%d timeout=%d fail=%d\n"+
+			"table:     size=%d  buckets=%d  added=%d removed=%d\n"+
+			"loop:      passes=%d  queue=%d dropped=%d\n"+
+			"%s",
+		get("network_size"), get("network_requests_in_flight"), get("network_node_handlers"),
+		get("bootstrap_running"), get("bootstrap_find_sent"), get("bootstrap_find_succeeded"), get("bootstrap_find_failed"),
+		get("explore_running"), get("explore_find_sent"), get("explore_find_succeeded"), get("explore_find_failed"),
+		get("survey_running"), get("survey_find_sent"), get("survey_find_succeeded"), get("survey_find_failed"),
+		get("include_candidate_count"), get("include_checks_sent"), get("include_checks_passed"), get("include_checks_failed"),
+		get("probe_pending_count"), get("probe_checks_sent"), get("probe_checks_passed"), get("probe_checks_failed"),
+		get("survey_regions"), get("survey_oldest_region_age_seconds"), get("surveys_completed"), get("surveys_timeout"), get("surveys_failed"),
+		get("routing_table_size"), get("routing_table_buckets_occupied"), get("routing_table_additions"), get("routing_table_removals"),
+		get("coordinator_event_loop_passes"), get("routing_inbound_queue_depth"), get("routing_inbound_events_dropped"),
+		bucketsLine(rt),
+	)
+}
+
+// bucketsLine renders the size of each routing table bucket by common prefix length, reading the
+// table directly. It shows one number per cpl from zero up to the highest occupied bucket.
+func bucketsLine(rt *triert.TrieRT[kadt.Key, kadt.PeerID]) string {
+	maxCpl := -1
+	for cpl := range 256 {
+		if rt.CplSize(cpl) > 0 {
+			maxCpl = cpl
+		}
+	}
+	if maxCpl < 0 {
+		return "buckets:   (empty)"
+	}
+
+	var b strings.Builder
+	b.WriteString("buckets:   ")
+	for cpl := 0; cpl <= maxCpl; cpl++ {
+		fmt.Fprintf(&b, "%d ", rt.CplSize(cpl))
+	}
+	return strings.TrimRight(b.String(), " ")
+}
+
+// collectMetrics pulls a snapshot from the reader and flattens the int64 and float64 counters and
+// gauges into a map keyed by instrument name, summing the data points of each instrument. Histograms
+// are not included. A tagged instrument's series are summed together, so this loses per-attribute
+// detail.
+func collectMetrics(ctx context.Context, reader *sdkmetric.ManualReader) (map[string]float64, error) {
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(ctx, &rm); err != nil {
+		return nil, err
+	}
+
+	vals := make(map[string]float64)
+	for _, sm := range rm.ScopeMetrics {
+		for _, inst := range sm.Metrics {
+			switch data := inst.Data.(type) {
+			case metricdata.Sum[int64]:
+				for _, dp := range data.DataPoints {
+					vals[inst.Name] += float64(dp.Value)
+				}
+			case metricdata.Gauge[int64]:
+				for _, dp := range data.DataPoints {
+					vals[inst.Name] += float64(dp.Value)
+				}
+			case metricdata.Sum[float64]:
+				for _, dp := range data.DataPoints {
+					vals[inst.Name] += dp.Value
+				}
+			case metricdata.Gauge[float64]:
+				for _, dp := range data.DataPoints {
+					vals[inst.Name] += dp.Value
+				}
+			}
+		}
+	}
+
+	return vals, nil
 }
 
 // rtText renders the routing table panel: how long the node has run, how many nodes the table

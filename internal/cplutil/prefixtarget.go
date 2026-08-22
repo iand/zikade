@@ -28,7 +28,7 @@ func GenRandKeyForPrefix(prefix bitstr.Key) (kadt.Key, error) {
 	// significant first, and the remaining low bits are random so successive calls for the same
 	// prefix return different keys.
 	var p uint16
-	for i := 0; i < l; i++ {
+	for i := range l {
 		if prefix[i] == '1' {
 			p |= 1 << (15 - i)
 		}

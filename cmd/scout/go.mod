@@ -6,12 +6,13 @@ replace github.com/probe-lab/zikade => ../..
 
 require (
 	github.com/gdamore/tcell/v2 v2.13.10
-	github.com/iand/xorbie v0.0.10
+	github.com/iand/xorbie v0.0.11
 	github.com/ipfs/go-cid v0.6.2
 	github.com/ipfs/go-libdht v0.5.0
 	github.com/libp2p/go-libp2p v0.49.0
 	github.com/probe-lab/zikade v0.0.0
 	github.com/rivo/tview v0.42.0
+	go.opentelemetry.io/otel/sdk/metric v1.45.0
 )
 
 require (
@@ -104,7 +105,6 @@ require (
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.45.0 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.uber.org/dig v1.19.0 // indirect
 	go.uber.org/fx v1.24.0 // indirect

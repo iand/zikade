@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -117,7 +118,7 @@ func (d *DHT) Provide(ctx context.Context, c cid.Cid, brdcst bool) error {
 	}
 
 	// finally, find the closest peers to the target key.
-	stats, err := d.kad.BroadcastFollowUp(ctx, msg)
+	stats, err := d.kad.PublishFollowUp(ctx, msg)
 	if err != nil {
 		return err
 	}
@@ -281,10 +282,8 @@ func (d *DHT) FindProvidersProgress(ctx context.Context, c cid.Cid, count int, o
 		return nil, fmt.Errorf("stored value is not a provider set, got %T", stored)
 	}
 
-	for _, provider := range ps.providers {
-		if add(provider) {
-			return providers, nil
-		}
+	if slices.ContainsFunc(ps.providers, add) {
+		return providers, nil
 	}
 
 	msg := &pb.Message{
@@ -297,10 +296,8 @@ func (d *DHT) FindProvidersProgress(ctx context.Context, c cid.Cid, count int, o
 			onVisit(peer.ID(id), stats)
 		}
 
-		for _, provider := range resp.ProviderAddrInfos() {
-			if add(provider) {
-				return coordt.ErrSkipRemaining
-			}
+		if slices.ContainsFunc(resp.ProviderAddrInfos(), add) {
+			return coordt.ErrSkipRemaining
 		}
 
 		return nil
@@ -347,7 +344,7 @@ func (d *DHT) PutValue(ctx context.Context, keyStr string, value []byte, opts ..
 	}
 
 	// finally, find the closest peers to the target key.
-	stats, err := d.kad.BroadcastFollowUp(ctx, msg)
+	stats, err := d.kad.PublishFollowUp(ctx, msg)
 	if err != nil {
 		return fmt.Errorf("query error: %w", err)
 	}
@@ -561,7 +558,7 @@ func (d *DHT) searchValueRoutine(ctx context.Context, backend Backend, ns string
 			Record: record.MakePutRecord(string(routingKey), best),
 		}
 
-		if _, err := d.kad.BroadcastStatic(ctx, msg, fixupPeers); err != nil {
+		if _, err := d.kad.PublishStatic(ctx, msg, fixupPeers); err != nil {
 			d.log.Warn("Failed updating peer")
 		}
 	}()

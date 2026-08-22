@@ -101,6 +101,10 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		return nil, fmt.Errorf("init telemetry: %w", err)
 	}
 
+	if err := registerRoutingTableMetrics(cfg.MeterProvider, d.rt); err != nil {
+		return nil, fmt.Errorf("register routing table metrics: %w", err)
+	}
+
 	// initialize backends
 	if len(cfg.Backends) != 0 {
 		d.backends = cfg.Backends
@@ -123,7 +127,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 	coordCfg.TracerProvider = cfg.TracerProvider
 	coordCfg.ReplicationFactor = cfg.BucketSize
 
-	coordCfg.Query.Logger = cfg.Logger.With("behaviour", "pooledquery")
+	coordCfg.Query.Logger = cfg.Logger.With("behaviour", "query")
 	coordCfg.Query.Concurrency = cfg.Query.Concurrency
 	coordCfg.Query.Timeout = cfg.Query.Timeout
 	coordCfg.Query.RequestConcurrency = cfg.Query.RequestConcurrency
@@ -132,9 +136,11 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 	coordCfg.Routing.Logger = cfg.Logger.With("behaviour", "routing")
 	coordCfg.Routing.BootstrapPeers = d.addBootstrapPeers()
 	coordCfg.Routing.BootstrapMinimumPopulation = cfg.BootstrapMinimumPopulation
+	coordCfg.Routing.EnableExplore = true
+	coordCfg.Routing.ExploreCplFunc = cplutil.GenRandPeerID
 
-	coordCfg.Brdcst.Logger = cfg.Logger.With("behaviour", "pooledbroadcast")
-	coordCfg.Brdcst.VerifyResponse = verifyStoredRecord
+	coordCfg.Publish.Logger = cfg.Logger.With("behaviour", "publish")
+	coordCfg.Publish.VerifyResponse = verifyStoredRecord
 
 	coordCfg.Network.Logger = cfg.Logger.With("behaviour", "network")
 
@@ -144,7 +150,7 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		tele:       d.tele,
 		timeout:    cfg.TimeoutStreamRequest,
 	}
-	d.kad, err = xorbie.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, cplutil.GenRandPeerID, coordCfg)
+	d.kad, err = xorbie.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, coordCfg)
 	if err != nil {
 		return nil, fmt.Errorf("new coordinator: %w", err)
 	}
