@@ -33,15 +33,11 @@ type router struct {
 
 	// tele holds a reference to a telemetry struct
 	tele *Telemetry
-
-	// timeout is the duration a request has to complete, from opening the stream
-	// to reading the response
-	timeout time.Duration
 }
 
 var _ coordt.Router[kadt.Key, kadt.PeerID, *pb.Message] = (*router)(nil)
 
-func (r *router) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Message) (resp *pb.Message, err error) {
+func (r *router) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Message, deadline time.Time) (resp *pb.Message, err error) {
 	spanOpts := []trace.SpanStartOption{
 		trace.WithAttributes(tele.AttrMessageType(req.GetType().String())),
 		trace.WithAttributes(tele.AttrPeerID(to.String())),
@@ -71,7 +67,7 @@ func (r *router) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Messag
 	}
 	defer s.Close()
 
-	if err = s.SetDeadline(time.Now().Add(r.timeout)); err != nil {
+	if err = s.SetDeadline(deadline); err != nil {
 		return nil, fmt.Errorf("set stream deadline: %w", err)
 	}
 
@@ -122,13 +118,13 @@ func (r *router) SendMessage(ctx context.Context, to kadt.PeerID, req *pb.Messag
 	return &protoResp, err
 }
 
-func (r *router) GetClosestNodes(ctx context.Context, to kadt.PeerID, target kadt.Key) ([]kadt.PeerID, error) {
+func (r *router) GetClosestNodes(ctx context.Context, to kadt.PeerID, target kadt.Key, deadline time.Time) ([]kadt.PeerID, error) {
 	req := &pb.Message{
 		Type: pb.Message_FIND_NODE,
 		Key:  target.MsgKey(),
 	}
 
-	resp, err := r.SendMessage(ctx, to, req)
+	resp, err := r.SendMessage(ctx, to, req, deadline)
 	if err != nil {
 		return nil, err
 	}

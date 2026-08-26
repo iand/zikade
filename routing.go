@@ -558,7 +558,7 @@ func (d *DHT) searchValueRoutine(ctx context.Context, backend Backend, ns string
 			Record: record.MakePutRecord(string(routingKey), best),
 		}
 
-		if _, err := d.kad.PublishStatic(ctx, msg, fixupPeers); err != nil {
+		if _, err := d.kad.PublishStatic(ctx, msg, fixupPeers, len(fixupPeers)); err != nil {
 			d.log.Warn("Failed updating peer")
 		}
 	}()

@@ -148,7 +148,6 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		host:       h,
 		protocolID: cfg.ProtocolID,
 		tele:       d.tele,
-		timeout:    cfg.TimeoutStreamRequest,
 	}
 	d.kad, err = xorbie.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, coordCfg)
 	if err != nil {

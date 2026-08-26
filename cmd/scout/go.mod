@@ -6,7 +6,7 @@ replace github.com/probe-lab/zikade => ../..
 
 require (
 	github.com/gdamore/tcell/v2 v2.13.10
-	github.com/iand/xorbie v0.0.11
+	github.com/iand/xorbie v0.0.13
 	github.com/ipfs/go-cid v0.6.2
 	github.com/ipfs/go-libdht v0.5.0
 	github.com/libp2p/go-libp2p v0.49.0

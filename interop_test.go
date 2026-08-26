@@ -188,7 +188,6 @@ func newInteropRouter(d *DHT) *router {
 		host:       d.host,
 		protocolID: d.cfg.ProtocolID,
 		tele:       d.tele,
-		timeout:    d.cfg.TimeoutStreamRequest,
 	}
 }
 
@@ -253,7 +252,7 @@ func TestInteropPutValueToReferenceServer(t *testing.T) {
 		Type:   pb.Message_PUT_VALUE,
 		Key:    []byte(key),
 		Record: record.MakePutRecord(key, value),
-	})
+	}, time.Time{})
 	if err != nil {
 		t.Fatalf("zikade client putting value to reference server: %v", err)
 	}
@@ -270,7 +269,7 @@ func TestInteropPutValueToReferenceServer(t *testing.T) {
 	getResp, err := rtr.SendMessage(ctx, to, &pb.Message{
 		Type: pb.Message_GET_VALUE,
 		Key:  []byte(key),
-	})
+	}, time.Time{})
 	if err != nil {
 		t.Fatalf("zikade client getting value from reference server: %v", err)
 	}

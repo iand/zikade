@@ -167,10 +167,6 @@ type Config struct {
 	// we have successfully read a message from the stream.
 	TimeoutStreamIdle time.Duration
 
-	// TimeoutStreamRequest is the duration a request we send has to complete,
-	// measured from opening the stream to reading the response.
-	TimeoutStreamRequest time.Duration
-
 	// AddressFilter is used to filter the addresses we put into the peer store and
 	// also fetch from the peer store and serve to other peers. It is mainly
 	// used to filter out private addresses.
@@ -204,8 +200,7 @@ func DefaultConfig() *Config {
 		Backends:                   map[string]Backend{}, // if empty and [ProtocolIPFS] is used, it'll be populated with the ipns, pk and providers backends
 		Datastore:                  nil,
 		Logger:                     slog.New(zapslog.NewHandler(logging.Logger("dht").Desugar().Core())),
-		TimeoutStreamIdle:          time.Minute,      // MAGIC
-		TimeoutStreamRequest:       10 * time.Second, // MAGIC
+		TimeoutStreamIdle:          time.Minute, // MAGIC
 		AddressFilter:              AddrFilterPrivate,
 		MeterProvider:              otel.GetMeterProvider(),
 		TracerProvider:             otel.GetTracerProvider(),
@@ -305,13 +300,6 @@ func (c *Config) Validate() error {
 		return &ConfigurationError{
 			Component: "Config",
 			Err:       fmt.Errorf("stream idle timeout must be a positive duration"),
-		}
-	}
-
-	if c.TimeoutStreamRequest <= 0 {
-		return &ConfigurationError{
-			Component: "Config",
-			Err:       fmt.Errorf("stream request timeout must be a positive duration"),
 		}
 	}
 
