@@ -183,6 +183,14 @@ type Config struct {
 	//
 	// [opentelemetry docs]: https://opentelemetry.io/docs/concepts/signals/traces/#tracer-provider
 	TracerProvider trace.TracerProvider
+
+	// EnableProviderReprovide runs the region survey that reprovides the CIDs passed to
+	// [DHT.Provide] on the ReprovideInterval schedule.
+	EnableProviderReprovide bool
+
+	// ReprovideInterval is the time within which every region holding a provided CID is
+	// reprovided once.
+	ReprovideInterval time.Duration
 }
 
 // DefaultConfig returns a configuration struct that can be used as-is to
@@ -204,6 +212,8 @@ func DefaultConfig() *Config {
 		AddressFilter:              AddrFilterPrivate,
 		MeterProvider:              otel.GetMeterProvider(),
 		TracerProvider:             otel.GetTracerProvider(),
+		EnableProviderReprovide:    true,
+		ReprovideInterval:          22 * time.Hour, // MAGIC
 		Query:                      DefaultQueryConfig(),
 	}
 }

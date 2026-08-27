@@ -76,7 +76,27 @@ func (d *DHT) FindPeerProgress(ctx context.Context, id peer.ID, onVisit func(nod
 	return d.host.Peerstore().PeerInfo(foundPeer), nil
 }
 
+// Provide announces the given content and adds it to the reprovide set.
 func (d *DHT) Provide(ctx context.Context, c cid.Cid, brdcst bool) error {
+	if !c.Defined() {
+		return fmt.Errorf("invalid cid: undefined")
+	}
+
+	if d.provideKeys != nil {
+		if err := d.provideKeys.Add(ctx, kadt.NewKey(c.Hash())); err != nil {
+			return fmt.Errorf("register provide: %w", err)
+		}
+	}
+
+	return d.provideOnce(ctx, c, brdcst)
+}
+
+// ProvideOnce announces the given content without adding it to the reprovide set.
+func (d *DHT) ProvideOnce(ctx context.Context, c cid.Cid, brdcst bool) error {
+	return d.provideOnce(ctx, c, brdcst)
+}
+
+func (d *DHT) provideOnce(ctx context.Context, c cid.Cid, brdcst bool) error {
 	ctx, span := d.tele.Tracer.Start(ctx, "DHT.Provide", otel.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
@@ -103,22 +123,8 @@ func (d *DHT) Provide(ctx context.Context, c cid.Cid, brdcst bool) error {
 		return nil
 	}
 
-	// construct message
-	addrInfo := peer.AddrInfo{
-		ID:    d.host.ID(),
-		Addrs: d.host.Addrs(),
-	}
-
-	msg := &pb.Message{
-		Type: pb.Message_ADD_PROVIDER,
-		Key:  c.Hash(),
-		ProviderPeers: []*pb.Message_Peer{
-			pb.FromAddrInfo(addrInfo),
-		},
-	}
-
 	// finally, find the closest peers to the target key.
-	stats, err := d.kad.PublishFollowUp(ctx, msg)
+	stats, err := d.kad.PublishFollowUp(ctx, d.provideRecord(kadt.NewKey(c.Hash())))
 	if err != nil {
 		return err
 	}
@@ -128,6 +134,16 @@ func (d *DHT) Provide(ctx context.Context, c cid.Cid, brdcst bool) error {
 	}
 
 	return nil
+}
+
+func (d *DHT) provideRecord(k kadt.Key) *pb.Message {
+	return &pb.Message{
+		Type: pb.Message_ADD_PROVIDER,
+		Key:  k.MsgKey(),
+		ProviderPeers: []*pb.Message_Peer{
+			pb.FromAddrInfo(peer.AddrInfo{ID: d.host.ID(), Addrs: d.host.Addrs()}),
+		},
+	}
 }
 
 func (d *DHT) FindProvidersAsync(ctx context.Context, c cid.Cid, count int) <-chan peer.AddrInfo {

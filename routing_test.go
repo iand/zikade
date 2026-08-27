@@ -1,6 +1,7 @@
 package zikade
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,6 +14,7 @@ import (
 	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore/failstore"
+	"github.com/ipfs/go-libdht/kad/key/bitstr"
 	recpb "github.com/libp2p/go-libp2p-record/pb"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -282,6 +284,37 @@ func TestDHT_Provide_fails_if_routing_table_is_empty(t *testing.T) {
 
 	err := d.Provide(ctx, newRandomContent(t), true)
 	assert.Error(t, err)
+}
+
+func TestDHTProvideAddsToReprovideSet(t *testing.T) {
+	ctx := kadtest.CtxShort(t)
+	d := newTestDHT(t)
+
+	c := newRandomContent(t)
+	err := d.Provide(ctx, c, false)
+	require.NoError(t, err)
+
+	assert.True(t, reprovideSetContains(d, c), "provided cid missing from the reprovide set")
+}
+
+func TestDHTProvideOnceDoesNotAddToReprovideSet(t *testing.T) {
+	ctx := kadtest.CtxShort(t)
+	d := newTestDHT(t)
+
+	c := newRandomContent(t)
+	err := d.ProvideOnce(ctx, c, false)
+	require.NoError(t, err)
+
+	assert.False(t, reprovideSetContains(d, c), "ProvideOnce added the cid to the reprovide set")
+}
+
+func reprovideSetContains(d *DHT, c cid.Cid) bool {
+	for k := range d.provideKeys.KeysUnder(bitstr.Key("")) {
+		if bytes.Equal(k.MsgKey(), c.Hash()) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDHT_FindProvidersAsync_empty_routing_table(t *testing.T) {

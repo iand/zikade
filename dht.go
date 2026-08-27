@@ -53,6 +53,13 @@ type DHT struct {
 	// backends
 	backends map[string]Backend
 
+	// datastore is the store the Amino backends and the provide set share.
+	datastore Datastore
+
+	// provideKeys holds the Kademlia keys of the CIDs passed to Provide, so the region survey
+	// can reprovide them.
+	provideKeys *providerKeystore
+
 	// log is a convenience accessor to the logging instance. It gets the value
 	// of the logger field from the configuration.
 	log *slog.Logger
@@ -120,6 +127,13 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		d.backends[ns] = traceWrapBackend(ns, be, d.tele.Tracer)
 	}
 
+	if d.datastore != nil {
+		d.provideKeys, err = newProviderKeystore(context.Background(), d.datastore)
+		if err != nil {
+			return nil, fmt.Errorf("new provider keystore: %w", err)
+		}
+	}
+
 	// instantiate a new Kademlia DHT coordinator.
 	coordCfg := xorbie.DefaultCoordinatorConfig[kadt.Key, kadt.PeerID, *pb.Message]()
 	coordCfg.Logger = cfg.Logger
@@ -141,6 +155,13 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 
 	coordCfg.Publish.Logger = cfg.Logger.With("behaviour", "publish")
 	coordCfg.Publish.VerifyResponse = verifyStoredRecord
+	if d.provideKeys != nil {
+		coordCfg.Publish.Keystore = d.provideKeys
+		coordCfg.Publish.RecordSource = d.provideRecord
+		coordCfg.Publish.SurveyTargetFunc = cplutil.GenRandKeyForPrefix
+		coordCfg.Publish.EnableSurvey = cfg.EnableProviderReprovide
+		coordCfg.Publish.SurveyInterval = cfg.ReprovideInterval
+	}
 
 	coordCfg.Network.Logger = cfg.Logger.With("behaviour", "network")
 
@@ -209,6 +230,7 @@ func (d *DHT) initAminoBackends() (map[string]Backend, error) {
 
 	// wrap datastore in open telemetry tracing
 	dstore = trace.New(dstore, d.tele.Tracer)
+	d.datastore = dstore
 
 	pbeCfg, err := DefaultProviderBackendConfig()
 	if err != nil {
