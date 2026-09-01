@@ -123,10 +123,12 @@ func (d *DHT) provideOnce(ctx context.Context, c cid.Cid, brdcst bool) error {
 		return nil
 	}
 
-	// finally, find the closest peers to the target key.
-	stats, err := d.kad.PublishFollowUp(ctx, d.provideRecord(kadt.NewKey(c.Hash())))
+	// finally, publish the provider record to the nodes closest to the target key.
+	key := kadt.NewKey(c.Hash())
+	d.log.Debug("providing", "cid", c.String(), "key", key.HexString())
+	stats, err := d.kad.Publish(ctx, d.provideRecord(key))
 	if err != nil {
-		return err
+		return fmt.Errorf("publish error: %w", err)
 	}
 
 	if stats.StoreSuccess == 0 {
@@ -359,10 +361,10 @@ func (d *DHT) PutValue(ctx context.Context, keyStr string, value []byte, opts ..
 		Record: record.MakePutRecord(keyStr, value),
 	}
 
-	// finally, find the closest peers to the target key.
-	stats, err := d.kad.PublishFollowUp(ctx, msg)
+	// finally, publish the record to the nodes closest to the target key.
+	stats, err := d.kad.Publish(ctx, msg)
 	if err != nil {
-		return fmt.Errorf("query error: %w", err)
+		return fmt.Errorf("publish error: %w", err)
 	}
 
 	if stats.StoreSuccess == 0 {
