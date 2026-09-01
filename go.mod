@@ -51,7 +51,7 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
-	github.com/iand/xorbie v0.0.17
+	github.com/iand/xorbie v0.0.19
 	github.com/ipld/go-ipld-prime v0.24.0 // indirect
 	github.com/jackpal/go-nat-pmp v1.0.2 // indirect
 	github.com/jbenet/go-temp-err-catcher v0.1.0 // indirect
