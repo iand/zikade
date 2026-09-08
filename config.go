@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap/exp/zapslog"
 
 	"github.com/iand/xorbie/routing"
+	"github.com/probe-lab/zikade/internal/cplutil"
 	"github.com/probe-lab/zikade/kadt"
 )
 
@@ -191,6 +192,10 @@ type Config struct {
 	// ReprovideInterval is the time within which every region holding a provided CID is
 	// reprovided once.
 	ReprovideInterval time.Duration
+
+	// ReprovideRegionPrefixBits is the prefix length the reprovide region map is seeded with,
+	// giving 2^ReprovideRegionPrefixBits regions to survey.
+	ReprovideRegionPrefixBits int
 }
 
 // DefaultConfig returns a configuration struct that can be used as-is to
@@ -214,6 +219,7 @@ func DefaultConfig() *Config {
 		TracerProvider:             otel.GetTracerProvider(),
 		EnableProviderReprovide:    true,
 		ReprovideInterval:          22 * time.Hour, // MAGIC
+		ReprovideRegionPrefixBits:  7,              // MAGIC gives 128 regions for a network size of 4500 nodes
 		Query:                      DefaultQueryConfig(),
 	}
 }
@@ -273,6 +279,13 @@ func (c *Config) Validate() error {
 		return &ConfigurationError{
 			Component: "Config",
 			Err:       fmt.Errorf("bootstrap minimum population must not be negative"),
+		}
+	}
+
+	if c.ReprovideRegionPrefixBits < 1 || c.ReprovideRegionPrefixBits > cplutil.MaxPrefixBits {
+		return &ConfigurationError{
+			Component: "Config",
+			Err:       fmt.Errorf("reprovide region prefix bits must be between 1 and %d", cplutil.MaxPrefixBits),
 		}
 	}
 

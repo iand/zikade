@@ -161,6 +161,9 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 		coordCfg.Publish.SurveyTargetFunc = cplutil.GenRandKeyForPrefix
 		coordCfg.Publish.EnableSurvey = cfg.EnableProviderReprovide
 		coordCfg.Publish.SurveyInterval = cfg.ReprovideInterval
+		coordCfg.Publish.SurveyInitialPrefixLen = cfg.ReprovideRegionPrefixBits
+		coordCfg.Publish.SurveyMinPopulation = cfg.BucketSize
+		coordCfg.Publish.SurveyMaxPopulation = 2 * cfg.BucketSize
 	}
 
 	coordCfg.Network.Logger = cfg.Logger.With("behaviour", "network")

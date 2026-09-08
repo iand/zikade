@@ -8,6 +8,8 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/probe-lab/zikade/internal/cplutil"
 )
 
 func TestConfig_Validate(t *testing.T) {
@@ -128,6 +130,29 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("zero bucket size", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.BucketSize = 0
+		assert.Error(t, cfg.Validate())
+	})
+
+	t.Run("default reprovide region prefix bits", func(t *testing.T) {
+		cfg := DefaultConfig()
+		assert.Equal(t, 7, cfg.ReprovideRegionPrefixBits)
+	})
+
+	t.Run("zero reprovide region prefix bits", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.ReprovideRegionPrefixBits = 0
+		assert.Error(t, cfg.Validate())
+	})
+
+	t.Run("negative reprovide region prefix bits", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.ReprovideRegionPrefixBits = -1
+		assert.Error(t, cfg.Validate())
+	})
+
+	t.Run("reprovide region prefix bits above ceiling", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.ReprovideRegionPrefixBits = cplutil.MaxPrefixBits + 1
 		assert.Error(t, cfg.Validate())
 	})
 

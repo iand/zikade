@@ -11,17 +11,17 @@ import (
 	"github.com/probe-lab/zikade/kadt"
 )
 
-// maxPrefixBits is the longest prefix [GenRandKeyForPrefix] can mint a key for, bounded by the
+// MaxPrefixBits is the longest prefix [GenRandKeyForPrefix] can mint a key for, bounded by the
 // width of the precomputed table.
-const maxPrefixBits = 16
+const MaxPrefixBits = 16
 
 // GenRandKeyForPrefix returns a [kadt.Key] whose leading bits equal prefix. The key carries the
 // preimage that the Amino RPCs put on the wire, so the receiving node can recover the Kademlia key
 // by hashing it.
 func GenRandKeyForPrefix(prefix bitstr.Key) (kadt.Key, error) {
 	l := len(prefix)
-	if l > maxPrefixBits {
-		return kadt.Key{}, fmt.Errorf("cannot generate key for prefix longer than %d bits", maxPrefixBits)
+	if l > MaxPrefixBits {
+		return kadt.Key{}, fmt.Errorf("cannot generate key for prefix longer than %d bits", MaxPrefixBits)
 	}
 
 	// Build the 16-bit value the table is indexed by. The leading bits come from prefix, most
@@ -33,7 +33,7 @@ func GenRandKeyForPrefix(prefix bitstr.Key) (kadt.Key, error) {
 			p |= 1 << (15 - i)
 		}
 	}
-	if l < maxPrefixBits {
+	if l < MaxPrefixBits {
 		var buf [2]byte
 		if _, err := rand.Read(buf[:]); err != nil {
 			return kadt.Key{}, fmt.Errorf("read random bits: %w", err)
