@@ -1035,3 +1035,22 @@ func TestVerifyStoredRecord(t *testing.T) {
 		})
 	}
 }
+
+func TestDHT_FindProvidersAsync_repeated_local_lookup(t *testing.T) {
+	ctx := kadtest.CtxShort(t)
+	d := newTestDHT(t)
+	fillRoutingTable(t, d, 250)
+
+	c := newRandomContent(t)
+	provider := peer.AddrInfo{ID: newPeerID(t)}
+	_, err := d.backends[namespaceProviders].Store(ctx, string(c.Hash()), provider)
+	require.NoError(t, err)
+
+	// The second lookup is answered from the provider cache filled by the first.
+	for i := range 2 {
+		out := d.FindProvidersAsync(ctx, c, 1)
+		val := kadtest.ReadItem(t, ctx, out)
+		assert.Equal(t, provider.ID, val.ID, "lookup %d", i+1)
+		kadtest.AssertClosed(t, ctx, out)
+	}
+}

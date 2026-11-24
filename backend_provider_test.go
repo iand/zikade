@@ -177,3 +177,35 @@ func TestProvidersBackend_Validate(t *testing.T) {
 		assert.Equal(t, 0, idx)
 	})
 }
+
+func TestProvidersBackend_Fetch_after_store_includes_new_provider(t *testing.T) {
+	ctx := context.Background()
+	b := newBackendProvider(t, nil)
+
+	key := string(newRandomContent(t).Hash())
+	first := peer.AddrInfo{ID: newPeerID(t)}
+	second := peer.AddrInfo{ID: newPeerID(t)}
+
+	_, err := b.Store(ctx, key, first)
+	require.NoError(t, err)
+
+	// The first fetch reads the datastore and caches the set.
+	_, err = b.Fetch(ctx, key)
+	require.NoError(t, err)
+
+	_, err = b.Store(ctx, key, second)
+	require.NoError(t, err)
+
+	// The second fetch is answered from the cache.
+	fetched, err := b.Fetch(ctx, key)
+	require.NoError(t, err)
+
+	set, ok := fetched.(*providerSet)
+	require.True(t, ok, "fetched value is %T, want *providerSet", fetched)
+
+	var ids []peer.ID
+	for _, p := range set.providers {
+		ids = append(ids, p.ID)
+	}
+	assert.ElementsMatch(t, []peer.ID{first.ID, second.ID}, ids)
+}

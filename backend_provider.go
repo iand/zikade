@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +40,9 @@ type ProvidersBackend struct {
 	// cache is a LRU cache for frequently requested records. It is populated
 	// when peers request a record and pruned during garbage collection.
 	// TODO: is that really so effective? The cache size is quite low either.
-	cache *lru.Cache[string, providerSet]
+	// A cached set is never modified, since callers of Fetch read it without a lock; Store
+	// replaces it with an extended copy.
+	cache *lru.Cache[string, *providerSet]
 
 	// addrBook holds a reference to the peerstore's address book to store and
 	// fetch peer multiaddresses from (we don't save them in the datastore).
@@ -136,7 +140,9 @@ func (p *ProvidersBackend) Store(ctx context.Context, key string, value any) (an
 	cacheKey := newDatastoreKey(p.namespace, key).String()
 	dsKey := newDatastoreKey(p.namespace, key, string(addrInfo.ID))
 	if provs, ok := p.cache.Get(cacheKey); ok {
-		provs.addProvider(addrInfo, rec.expiry)
+		extended := provs.clone()
+		extended.addProvider(addrInfo, rec.expiry)
+		p.cache.Add(cacheKey, extended)
 	}
 
 	filtered := p.cfg.AddressFilter(addrInfo.Addrs)
@@ -226,7 +232,7 @@ func (p *ProvidersBackend) Fetch(ctx context.Context, key string) (any, error) {
 	if len(out.providers) == 0 {
 		return nil, ds.ErrNotFound
 	} else {
-		p.cache.Add(qKey.String(), *out)
+		p.cache.Add(qKey.String(), out)
 	}
 
 	return out, nil
@@ -450,6 +456,14 @@ func (ps *providerSet) addProvider(addrInfo peer.AddrInfo, t time.Time) {
 	}
 
 	ps.set[addrInfo.ID] = t
+}
+
+// clone returns a copy of the providerSet that shares no state with it.
+func (ps *providerSet) clone() *providerSet {
+	return &providerSet{
+		providers: slices.Clone(ps.providers),
+		set:       maps.Clone(ps.set),
+	}
 }
 
 // newDatastoreKey assembles a datastore for the given namespace and set of

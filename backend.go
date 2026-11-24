@@ -122,7 +122,7 @@ func NewBackendProvider(pstore peerstore.Peerstore, dstore ds.Datastore, cfg *Pr
 		}
 	}
 
-	cache, err := lru.New[string, providerSet](cfg.CacheSize)
+	cache, err := lru.New[string, *providerSet](cfg.CacheSize)
 	if err != nil {
 		return nil, err
 	}

@@ -1566,3 +1566,23 @@ func TestDHT_handleGetProviders_only_serve_filtered_addresses(t *testing.T) {
 	require.Len(t, maddrs, 1)
 	assert.True(t, maddrs[0].Equal(testMaddr))
 }
+
+func TestDHT_handleGetProviders_repeated_request(t *testing.T) {
+	ctx := context.Background()
+	d := newTestDHT(t)
+
+	key := newRandomContent(t).Hash()
+	provider := newAddrInfo(t)
+	_, err := d.backends[namespaceProviders].Store(ctx, string(key), provider)
+	require.NoError(t, err)
+
+	req := &pb.Message{Type: pb.Message_GET_PROVIDERS, Key: key}
+
+	// The second request is answered from the provider cache filled by the first.
+	for i := range 2 {
+		res, err := d.handleGetProviders(ctx, newPeerID(t), req)
+		require.NoError(t, err, "request %d", i+1)
+		require.Len(t, res.ProviderPeers, 1, "request %d", i+1)
+		assert.Equal(t, provider.ID, peer.ID(res.ProviderPeers[0].Id), "request %d", i+1)
+	}
+}

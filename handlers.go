@@ -240,7 +240,7 @@ func (d *DHT) handleGetProviders(ctx context.Context, remote peer.ID, req *pb.Me
 
 	pset, ok := fetched.(*providerSet)
 	if !ok {
-		return nil, fmt.Errorf("expected *providerSet value type, got: %T", pset)
+		return nil, fmt.Errorf("expected *providerSet value type, got: %T", fetched)
 	}
 
 	pbProviders := make([]*pb.Message_Peer, len(pset.providers))
