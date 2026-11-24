@@ -46,6 +46,9 @@ type DHT struct {
 	// kad is a reference to the coordinator
 	kad *aminoCoordinator
 
+	// router sends the coordinator's requests and those passed to SendMessage.
+	router *router
+
 	// rt holds a reference to the routing table implementation. This can be
 	// configured via the Config struct.
 	rt routing.RoutingTableCpl[kadt.Key, kadt.PeerID]
@@ -168,12 +171,12 @@ func New(h host.Host, cfg *Config) (*DHT, error) {
 
 	coordCfg.Network.Logger = cfg.Logger.With("behaviour", "network")
 
-	rtr := &router{
+	d.router = &router{
 		host:       h,
 		protocolID: cfg.ProtocolID,
 		tele:       d.tele,
 	}
-	d.kad, err = xorbie.NewCoordinator(kadt.PeerID(d.host.ID()), rtr, d.rt, coordCfg)
+	d.kad, err = xorbie.NewCoordinator(kadt.PeerID(d.host.ID()), d.router, d.rt, coordCfg)
 	if err != nil {
 		return nil, fmt.Errorf("new coordinator: %w", err)
 	}
@@ -421,6 +424,25 @@ func (d *DHT) debugErr(err error, msg string, args ...any) {
 // lookups have completed for an estimate to be made.
 func (d *DHT) NetworkSize() (netsize.Estimate, error) {
 	return d.kad.NetworkSize()
+}
+
+// SendMessage sends req to p on a new stream and returns the response, or a nil response for a
+// message that draws none, such as ADD_PROVIDER.
+//
+// The stream deadline is the earlier of the context deadline and [QueryConfig.RequestTimeout]
+// from now. The response is returned unchecked; a PUT_VALUE response echoes the record the peer
+// stored. Closer peers in the response are added to the peerstore.
+func (d *DHT) SendMessage(ctx context.Context, p peer.ID, req *pb.Message) (*pb.Message, error) {
+	if req == nil {
+		return nil, fmt.Errorf("nil request")
+	}
+
+	deadline := time.Now().Add(d.cfg.Query.RequestTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+
+	return d.router.SendMessage(ctx, kadt.PeerID(p), req, deadline)
 }
 
 // AddAddresses suggests peers and their associated addresses to be added to the routing table.
